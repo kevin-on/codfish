@@ -595,16 +595,11 @@ MoveList ChessBoard::GeneratePseudolegalMoves() const {
 bool ChessBoard::IsValid() const {
   const auto all = ours() | theirs();
   auto check = all | pawns() | bishops() | rooks() | queens() | kings();
-  if (check != all ||
-      (pawns() & bishops()).as_int() ||
-      (pawns() & rooks()).as_int() ||
-      (pawns() & queens()).as_int() ||
-      (pawns() & kings()).as_int() ||
-      (bishops() & rooks()).as_int() ||
-      (bishops() & queens()).as_int() ||
-      (bishops() & kings()).as_int() ||
-      (rooks() & queens()).as_int() ||
-      (rooks() & kings()).as_int() ||
+  if (check != all || (pawns() & bishops()).as_int() ||
+      (pawns() & rooks()).as_int() || (pawns() & queens()).as_int() ||
+      (pawns() & kings()).as_int() || (bishops() & rooks()).as_int() ||
+      (bishops() & queens()).as_int() || (bishops() & kings()).as_int() ||
+      (rooks() & queens()).as_int() || (rooks() & kings()).as_int() ||
       (queens() & kings()).as_int()) {
     return false;
   }

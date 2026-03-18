@@ -43,9 +43,7 @@ std::vector<Position> GameState::GetPositions() const {
   positions.reserve(moves.size() + 1);
   positions.push_back(startpos);
   std::transform(moves.begin(), moves.end(), std::back_inserter(positions),
-                 [&](Move m) {
-                   return Position(positions.back(), m);
-                 });
+                 [&](Move m) { return Position(positions.back(), m); });
   return positions;
 }
 

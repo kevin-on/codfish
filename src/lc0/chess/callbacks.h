@@ -159,8 +159,7 @@ class UciResponderForwarder : public UciResponder {
   }
   void Register(UciResponder* wrapped) {
     if (wrapped_) {
-      throw ChessError(
-          "UciResponderForwarder already has a wrapped responder");
+      throw ChessError("UciResponderForwarder already has a wrapped responder");
     }
     wrapped_ = wrapped;
   }
