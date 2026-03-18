@@ -1,6 +1,9 @@
 Index:
   StandardLibrary: No
 
+Format:
+  Style: file
+
 CompileFlags:
   Add:
     - -Isrc
