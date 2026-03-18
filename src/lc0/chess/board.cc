@@ -32,11 +32,12 @@
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <sstream>
+#include <type_traits>
 #include <utility>
-#include <absl/cleanup/cleanup.h>
 
-#include "utils/exception.h"
+#include "chess/error.h"
 
 #if not defined(NO_PEXT)
 // Include header for pext instruction.
@@ -69,6 +70,23 @@ void ChessBoard::Mirror() {
 }
 
 namespace {
+template <typename F>
+class ScopeExit {
+ public:
+  explicit ScopeExit(F fn) : fn_(std::move(fn)) {}
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit& operator=(const ScopeExit&) = delete;
+  ~ScopeExit() { fn_(); }
+
+ private:
+  F fn_;
+};
+
+template <typename F>
+auto MakeScopeExit(F&& fn) {
+  return ScopeExit<std::decay_t<F>>(std::forward<F>(fn));
+}
+
 static const std::pair<int, int> kKingMoves[] = {
     {-1, -1}, {-1, 0}, {-1, 1}, {0, -1}, {0, 1}, {1, -1}, {1, 0}, {1, 1}};
 
@@ -353,7 +371,7 @@ static void BuildAttacksTable(MagicParams* magic_params,
       // collisions should be constructive.
       if (attacks_table[table_offset + index] != 0 &&
           attacks_table[table_offset + index] != attacks) {
-        throw Exception("Invalid magic number!");
+        throw ChessError("Invalid magic number!");
       }
 #else
       uint64_t index =
@@ -596,13 +614,13 @@ bool ChessBoard::IsValid() const {
 bool ChessBoard::ApplyMove(Move move) {
   assert(our_pieces_.intersects(BitBoard::FromSquare(move.from())));
 #ifndef NDEBUG
-  absl::Cleanup validate = [&] {
+  const auto validate = MakeScopeExit([&] {
     if (!IsValid()) {
-      CERR << "Move " + move.ToString(true) +
-                  " resulted in invalid board: " + DebugString();
+      std::cerr << "Move " << move.ToString(true)
+                << " resulted in invalid board: " << DebugString() << '\n';
       assert(false);
     }
-  };
+  });
 #endif
   const Square& from = move.from();
   const Square& to = move.to();
@@ -983,8 +1001,8 @@ void ChessBoard::SetFromFen(std::string_view fen, int* rule50_ply, int* moves) {
   size_t pos = 0;
 
   auto complain = [&](std::string_view msg) {
-    throw Exception("Bad fen string (" + std::string(msg) +
-                    "): " + std::string(fen));
+    throw ChessError("Bad fen string (" + std::string(msg) +
+                     "): " + std::string(fen));
   };
   auto skip_whitespace = [&](std::string_view where = {}) {
     if (!where.empty() && pos < fen.size() && fen[pos] != ' ') {
@@ -1149,8 +1167,8 @@ std::string ChessBoard::DebugString() const {
 
 Move ChessBoard::ParseMove(std::string_view move_str) const {
   auto complain = [&move_str](std::string_view reason) {
-    throw Exception("Invalid move (" + std::string(reason) +
-                    "): " + std::string(move_str));
+    throw ChessError("Invalid move (" + std::string(reason) +
+                     "): " + std::string(move_str));
   };
   if (move_str.size() < 4 || move_str.size() > 5) complain("wrong move size");
   File from_file = File::Parse(move_str[0]);

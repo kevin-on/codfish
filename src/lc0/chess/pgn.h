@@ -34,11 +34,11 @@
 #include <cerrno>
 #include <fstream>
 #include <optional>
+#include <sstream>
 
 #include "chess/bitboard.h"
 #include "chess/board.h"
-#include "utils/exception.h"
-#include "utils/logging.h"
+#include "chess/error.h"
 
 namespace lczero {
 
@@ -68,8 +68,8 @@ class PgnReader {
   void AddPgnFile(const std::string& filepath) {
     const gzFile file = gzopen(filepath.c_str(), "r");
     if (!file) {
-      throw Exception(errno == ENOENT ? "Opening book file not found."
-                                      : "Error opening opening book file.");
+      throw ChessError(errno == ENOENT ? "Opening book file not found."
+                                       : "Error opening opening book file.");
     }
 
     std::string line;
@@ -187,8 +187,7 @@ class PgnReader {
       default:
         // 0 and 1 are pawn and king, which are not legal promotions, other
         // numbers don't correspond to a known piece type.
-        CERR << "Unexpected promotion!!";
-        throw Exception("Trying to create a move with illegal promotion.");
+        throw ChessError("Trying to create a move with illegal promotion.");
     }
   }
 
@@ -298,15 +297,13 @@ class PgnReader {
           continue;
         }
         if (pc1 != -1) {
-          CERR << "Ambiguous!!";
-          throw Exception("Opening book move seems ambiguous.");
+          throw ChessError("Opening book move seems ambiguous.");
         }
         pr1 = sq.rank().idx;
         pc1 = sq.file().idx;
       }
       if (pc1 == -1) {
-        CERR << "No Match!!";
-        throw Exception("Opening book move seems illegal.");
+        throw ChessError("Opening book move seems illegal.");
       }
       r1 = pr1;
       c1 = pc1;

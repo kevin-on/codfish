@@ -1,0 +1,27 @@
+# macOS metadata
+.DS_Store
+
+# Editor and local tool state
+.vscode/
+.idea/
+.cursor/
+.claude/
+.cache/
+.tmp_test_bin/
+*.swp
+*.swo
+*~
+
+# CMake and local build outputs
+/build/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+compile_flags.txt
+
+# Debug symbol bundles on macOS
+*.dSYM/

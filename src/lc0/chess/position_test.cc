@@ -22,8 +22,6 @@
 
 #include <iostream>
 
-#include "utils/string.h"
-
 namespace lczero {
 
 TEST(Position, SetFenGetFen) {

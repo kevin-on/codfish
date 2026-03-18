@@ -1,0 +1,11 @@
+Index:
+  StandardLibrary: No
+
+CompileFlags:
+  Add:
+    - -Isrc
+    - -Isrc/lc0
+    - -I/opt/homebrew/include
+    - -DNO_PEXT
+    - -xc++
+    - -std=c++23

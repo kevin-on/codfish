@@ -34,8 +34,8 @@
 #include <vector>
 
 #include "chess/bitboard.h"
+#include "chess/error.h"
 #include "chess/position.h"
-#include "utils/exception.h"
 
 namespace lczero {
 
@@ -159,13 +159,14 @@ class UciResponderForwarder : public UciResponder {
   }
   void Register(UciResponder* wrapped) {
     if (wrapped_) {
-      throw Exception("UciResponderForwarder already has a wrapped responder");
+      throw ChessError(
+          "UciResponderForwarder already has a wrapped responder");
     }
     wrapped_ = wrapped;
   }
   void Unregister(UciResponder* wrapped) {
     if (wrapped_ != wrapped) {
-      throw Exception(
+      throw ChessError(
           "UciResponderForwarder doesn't have this wrapped responder");
     }
     wrapped_ = nullptr;

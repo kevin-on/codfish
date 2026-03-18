@@ -23,7 +23,7 @@
 #include <iostream>
 
 #include "chess/bitboard.h"
-#include "utils/exception.h"
+#include "chess/error.h"
 
 namespace lczero {
 
@@ -31,7 +31,7 @@ TEST(ChessBoard, IllegalFirstRankPawns) {
   ChessBoard board;
   EXPECT_THROW(
       board.SetFromFen("nqrbkrnr/bnnbnbnn/8/8/8/8/NNNBPNBN/QNRPKPQQ w - - 0 1");
-      , Exception);
+      , ChessError);
 }
 
 TEST(ChessBoard, PseudolegalMovesStartingPos) {
