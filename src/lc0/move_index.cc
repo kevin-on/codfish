@@ -1,3 +1,8 @@
+#include "move_index.h"
+
+#include <array>
+#include <string>
+
 #include "chess/types.h"
 #include "utils/bititer.h"
 
