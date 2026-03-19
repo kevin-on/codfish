@@ -1,14 +1,11 @@
 Index:
   StandardLibrary: No
 
-Format:
-  Style: file
-
 CompileFlags:
   Add:
     - -Isrc
     - -Isrc/lc0
     - -I/opt/homebrew/include
-    - -DNO_PEXT
+    - -DNO_PEXT # Remove this once we have a PEXT-enabled build
     - -xc++
     - -std=c++23
