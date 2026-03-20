@@ -7,7 +7,7 @@
 #include "utils/bititer.h"
 
 namespace lczero {
-const char* kMoveStrs[] = {
+const std::array<const char*, kPolicySize> kMoveStrs = {{
     "a1b1",  "a1c1",  "a1d1",  "a1e1",  "a1f1",  "a1g1",  "a1h1",  "a1a2",
     "a1b2",  "a1c2",  "a1a3",  "a1b3",  "a1c3",  "a1a4",  "a1d4",  "a1a5",
     "a1e5",  "a1a6",  "a1f6",  "a1a7",  "a1g7",  "a1a8",  "a1h8",  "b1a1",
@@ -240,7 +240,9 @@ const char* kMoveStrs[] = {
     "e7f8r", "e7f8b", "f7e8q", "f7e8r", "f7e8b", "f7f8q", "f7f8r", "f7f8b",
     "f7g8q", "f7g8r", "f7g8b", "g7f8q", "g7f8r", "g7f8b", "g7g8q", "g7g8r",
     "g7g8b", "g7h8q", "g7h8r", "g7h8b", "h7g8q", "h7g8r", "h7g8b", "h7h8q",
-    "h7h8r", "h7h8b"};
+    "h7h8r", "h7h8b"}};
+
+static_assert(kMoveStrs.size() == kPolicySize);
 
 const std::array kPackedIdxToNNIdx = []() {
   std::array<uint16_t, 64 * 64 * 4> indices;

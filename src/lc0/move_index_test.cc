@@ -28,7 +28,6 @@
 namespace lczero {
 namespace {
 
-constexpr int kPolicySize = 1858;
 constexpr std::array<int, 8> kTransforms = {
     NoTransform,
     FlipTransform,
