@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -31,6 +32,19 @@ class ThreadSafeQueue {
     return item;
   }
 
+  template <class Clock, class Duration>
+  std::optional<T> pop_until(
+      std::chrono::time_point<Clock, Duration> deadline) {
+    std::unique_lock<std::mutex> lock(mu_);
+    cv_.wait_until(lock, deadline,
+                   [this] { return closed_ || !queue_.empty(); });
+    if (queue_.empty()) return std::nullopt;
+
+    T item = std::move(queue_.front());
+    queue_.pop_front();
+    return item;
+  }
+
   void close() {
     {
       std::lock_guard<std::mutex> lock(mu_);
@@ -47,4 +61,3 @@ class ThreadSafeQueue {
 };
 
 }  // namespace engine
-
