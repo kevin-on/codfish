@@ -1,41 +1,12 @@
 #pragma once
 
-#include <cstdint>
-#include <memory>
 #include <mutex>
-#include <optional>
 #include <thread>
-#include <vector>
 
-#include "searcher.h"
+#include "runtime_types.h"
 #include "thread_safe_queue.h"
 
 namespace engine {
-
-enum class TaskState : uint8_t {
-  kNew,
-  kWaitingEval,
-  kReady,
-};
-
-struct GameTask {
-  virtual ~GameTask() = default;
-
-  std::unique_ptr<MCTSSearcher> searcher;
-  std::optional<SearchCoroutine> coroutine;
-  TaskState state = TaskState::kNew;
-  std::optional<EvalResponse> response;
-};
-
-struct PendingEval {
-  std::unique_ptr<GameTask> task;
-  EvalRequest request;
-};
-
-struct CompletedSearch {
-  std::unique_ptr<GameTask> task;
-  SearchResult result;
-};
 
 struct WorkerChannels {
   ThreadSafeQueue<std::unique_ptr<GameTask>>* ready_queue = nullptr;

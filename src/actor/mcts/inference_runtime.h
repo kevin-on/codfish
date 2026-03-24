@@ -8,7 +8,8 @@
 #include "engine/encoder.h"
 #include "engine/infer/inference_backend.h"
 #include "engine/infer/model_manifest.h"
-#include "worker_runtime.h"
+#include "runtime_types.h"
+#include "thread_safe_queue.h"
 
 namespace engine {
 

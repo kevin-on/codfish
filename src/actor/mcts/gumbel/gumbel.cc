@@ -371,6 +371,7 @@ class GumbelMCTS::Impl {
     }
 
     SearchResult result;
+    result.root_history = root_history_;
     result.selected_move = root_->edges[selected_action].move;
     result.legal_moves.reserve(root_->edges.size());
     for (const auto& edge : root_->edges) {

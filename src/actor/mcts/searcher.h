@@ -31,7 +31,8 @@ struct EvalResponse {
 
 struct SearchResult {
   // If game_result != UNDECIDED, the search position is terminal and
-  // selected_move, legal_moves, and improved_policy are invalid.
+  // root_history, selected_move, legal_moves, and improved_policy are invalid.
+  lczero::PositionHistory root_history;
   lczero::Move selected_move;
   std::vector<lczero::Move> legal_moves;
   std::vector<float> improved_policy;
