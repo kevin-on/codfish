@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <numeric>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -42,6 +43,22 @@ std::array<uint8_t, kInputElements> Encode(
   FeatureEncoder encoder;
   std::array<uint8_t, kInputElements> out{};
   encoder.EncodeOne(history, out);
+  return out;
+}
+
+std::array<uint8_t, kInputElements> Encode(
+    std::span<const lczero::Position> positions) {
+  FeatureEncoder encoder;
+  std::array<uint8_t, kInputElements> out{};
+  encoder.EncodeOne(positions, out);
+  return out;
+}
+
+std::vector<uint8_t> EncodeBatch(
+    std::span<const std::span<const lczero::Position>> batch) {
+  FeatureEncoder encoder;
+  std::vector<uint8_t> out(kInputElements * batch.size());
+  encoder.EncodeBatch(batch, out);
   return out;
 }
 
@@ -112,6 +129,43 @@ TEST(FeatureEncoder, EncodeBatchMatchesEncodeOneOutputs) {
   encoder.EncodeBatch(batch, actual);
   encoder.EncodeOne(batch[0], expected0);
   encoder.EncodeOne(batch[1], expected1);
+
+  EXPECT_TRUE(std::equal(expected0.begin(), expected0.end(), actual.begin()));
+  EXPECT_TRUE(std::equal(expected1.begin(), expected1.end(),
+                         actual.begin() + kInputElements));
+}
+
+TEST(FeatureEncoder, EncodeOneSpanMatchesPositionHistoryOverload) {
+  const std::array<lczero::Position, 3> positions = {
+      lczero::Position::FromFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1"),
+      lczero::Position::FromFen("4k3/8/8/8/8/8/8/4K2R w - - 0 1"),
+      lczero::Position::FromFen("4k3/8/8/8/8/8/3K4/7R w - - 0 1"),
+  };
+  const lczero::PositionHistory history(positions);
+
+  const auto from_history = Encode(history);
+  const auto from_span = Encode(std::span<const lczero::Position>(positions));
+
+  EXPECT_TRUE(std::equal(from_history.begin(), from_history.end(),
+                         from_span.begin()));
+}
+
+TEST(FeatureEncoder, EncodeBatchSpanMatchesEncodeOneOutputs) {
+  const std::array<lczero::Position, 2> first = {
+      lczero::Position::FromFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1"),
+      lczero::Position::FromFen("4k3/8/8/8/8/8/8/4K2R w - - 0 1"),
+  };
+  const std::array<lczero::Position, 1> second = {
+      lczero::Position::FromFen("8/8/8/8/8/8/4k3/4K3 w - - 3 1"),
+  };
+  const std::array<std::span<const lczero::Position>, 2> batch = {
+      std::span<const lczero::Position>(first),
+      std::span<const lczero::Position>(second),
+  };
+
+  const std::vector<uint8_t> actual = EncodeBatch(batch);
+  const auto expected0 = Encode(batch[0]);
+  const auto expected1 = Encode(batch[1]);
 
   EXPECT_TRUE(std::equal(expected0.begin(), expected0.end(), actual.begin()));
   EXPECT_TRUE(std::equal(expected1.begin(), expected1.end(),

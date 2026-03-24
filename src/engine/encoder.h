@@ -46,8 +46,15 @@ inline constexpr std::size_t kInputElements = kInputPlanes * kBoardArea;
 
 class FeatureEncoder {
  public:
+  // positions must be ordered oldest -> current.
+  void EncodeOne(std::span<const lczero::Position> positions,
+                 std::span<uint8_t> out) const;
+
   void EncodeOne(const lczero::PositionHistory& hist,
                  std::span<uint8_t> out) const;
+
+  void EncodeBatch(std::span<const std::span<const lczero::Position>> batch,
+                   std::span<uint8_t> out) const;
 
   void EncodeBatch(std::span<const lczero::PositionHistory> batch,
                    std::span<uint8_t> out) const;

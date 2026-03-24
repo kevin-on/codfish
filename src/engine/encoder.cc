@@ -104,20 +104,37 @@ void EncodeGlobal(const lczero::Position& pos, std::span<uint8_t> out) {
 }
 }  // namespace
 
-void FeatureEncoder::EncodeOne(const lczero::PositionHistory& hist,
+void FeatureEncoder::EncodeOne(std::span<const lczero::Position> positions,
                                std::span<uint8_t> out) const {
-  assert(hist.GetLength() > 0);
+  assert(!positions.empty());
   assert(out.size() == kInputElements);
   FillPlane(out, 0);
 
-  const int last_idx = hist.GetLength() - 1;
-  const int positions_to_encode = std::min(hist.GetLength(), kHistoryLength);
+  const int last_idx = static_cast<int>(positions.size()) - 1;
+  const int positions_to_encode =
+      std::min(static_cast<int>(positions.size()), kHistoryLength);
   for (int history_idx = 0; history_idx < positions_to_encode; ++history_idx) {
-    EncodePosition(hist.GetPositionAt(last_idx - history_idx),
+    EncodePosition(positions[static_cast<std::size_t>(last_idx - history_idx)],
                    PositionPlanesAt(out, history_idx));
   }
 
-  EncodeGlobal(hist.Last(), GlobalPlanesAt(out));
+  EncodeGlobal(positions.back(), GlobalPlanesAt(out));
+}
+
+void FeatureEncoder::EncodeOne(const lczero::PositionHistory& hist,
+                               std::span<uint8_t> out) const {
+  assert(hist.GetLength() > 0);
+  EncodeOne(hist.GetPositions(), out);
+}
+
+void FeatureEncoder::EncodeBatch(
+    std::span<const std::span<const lczero::Position>> batch,
+    std::span<uint8_t> out) const {
+  assert(out.size() == kInputElements * batch.size());
+
+  for (std::size_t idx = 0; idx < batch.size(); ++idx) {
+    EncodeOne(batch[idx], out.subspan(idx * kInputElements, kInputElements));
+  }
 }
 
 void FeatureEncoder::EncodeBatch(std::span<const lczero::PositionHistory> batch,
