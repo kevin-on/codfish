@@ -13,13 +13,13 @@ TEST(MockBackend, RunBeforeLoadReturnsError) {
 
   InferenceOutputs out;
   out.policy_logits = {1.0f};
-  out.wdl_logits = {2.0f};
+  out.wdl_probs = {2.0f};
   const Status status = backend.Run(batch, &out);
 
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.message(), "mock backend not loaded");
   EXPECT_TRUE(out.policy_logits.empty());
-  EXPECT_TRUE(out.wdl_logits.empty());
+  EXPECT_TRUE(out.wdl_probs.empty());
 }
 
 TEST(MockBackend, LoadRejectsInvalidPolicySize) {
@@ -71,13 +71,13 @@ TEST(MockBackend, RunWithNegativeBatchReturnsError) {
 
   InferenceOutputs out;
   out.policy_logits = {1.0f};
-  out.wdl_logits = {2.0f};
+  out.wdl_probs = {2.0f};
   const Status status = backend.Run(batch, &out);
 
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.message(), "negative batch size");
   EXPECT_TRUE(out.policy_logits.empty());
-  EXPECT_TRUE(out.wdl_logits.empty());
+  EXPECT_TRUE(out.wdl_probs.empty());
 }
 
 TEST(MockBackend, RunWithNullPlanesAndPositiveBatchReturnsError) {
@@ -112,7 +112,7 @@ TEST(MockBackend, LoadAndRunProducesExpectedShapes) {
 
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(out.policy_logits.size(), 28u);
-  EXPECT_EQ(out.wdl_logits.size(), 12u);
+  EXPECT_EQ(out.wdl_probs.size(), 12u);
 }
 
 }  // namespace

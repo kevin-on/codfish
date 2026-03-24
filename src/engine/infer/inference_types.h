@@ -13,9 +13,10 @@ struct InferenceBatch {
 struct InferenceOutputs {
   // Flattened per-batch outputs:
   //   policy_logits: B * policy_size
-  //   wdl_logits:    B * 3
+  //   wdl_probs:     B * 3 normalized W/D/L probabilities in
+  //                  win/draw/loss order, summing to 1
   std::vector<float> policy_logits;
-  std::vector<float> wdl_logits;
+  std::vector<float> wdl_probs;
 };
 
 }  // namespace engine
