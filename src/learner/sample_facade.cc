@@ -1,3 +1,4 @@
+#include "learner/sample_facade.h"
 #include "learner/sample_facade_internal.h"
 
 #include <algorithm>
@@ -117,3 +118,34 @@ std::vector<EncodedSampleDraft> BuildEncodedSampleDrafts(
 }
 
 }  // namespace engine::learner::internal
+
+namespace engine::learner {
+
+EncodedGameSamples EncodeRawGame(const RawGame& raw_game) {
+  EncodedGameSamples samples;
+  if (raw_game.plies.empty()) {
+    return samples;
+  }
+
+  const std::vector<internal::EncodedSampleDraft> drafts =
+      internal::BuildEncodedSampleDrafts(raw_game);
+  samples.sample_count = static_cast<int>(drafts.size());
+  samples.inputs.reserve(drafts.size() * kInputElements);
+  samples.policy_targets.reserve(drafts.size() * lczero::kPolicySize);
+  samples.wdl_targets.reserve(drafts.size() * 3);
+
+  for (const internal::EncodedSampleDraft& draft : drafts) {
+    samples.inputs.insert(samples.inputs.end(), draft.input.begin(),
+                          draft.input.end());
+    samples.policy_targets.insert(samples.policy_targets.end(),
+                                  draft.policy_target.begin(),
+                                  draft.policy_target.end());
+    samples.wdl_targets.insert(samples.wdl_targets.end(),
+                               draft.wdl_target.begin(),
+                               draft.wdl_target.end());
+  }
+
+  return samples;
+}
+
+}  // namespace engine::learner

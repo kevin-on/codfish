@@ -40,6 +40,7 @@ set(CODFISH_TEST_SOURCES
     src/actor/mcts/searchers/gumbel/gumbel_mcts_test.cc
     src/engine/encoder_test.cc
     src/learner/public_api_test.cc
+    src/learner/sample_facade_public_test.cc
     src/learner/sample_facade_test.cc
     src/learner/storage_facade_test.cc
     src/lc0/chess/board_test.cc
