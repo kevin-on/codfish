@@ -2,7 +2,7 @@
 
 #include <random>
 
-#include "../../engine/infer/inference_backend.h"
+#include "engine/infer/inference_backend.h"
 
 namespace engine {
 
