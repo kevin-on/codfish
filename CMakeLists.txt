@@ -167,12 +167,19 @@ if(BUILD_TESTING)
     set_tests_properties(search_coordinator_smoke_test PROPERTIES LABELS smoke)
 
     if(CODFISH_BUILD_LEARNER_PYTHON)
+        add_executable(
+            learner_raw_chunk_golden_writer
+            src/learner/raw_chunk_golden_writer.cc)
+        target_link_libraries(
+            learner_raw_chunk_golden_writer
+            PRIVATE codfish_core)
+
         add_test(
             NAME learner_python_test
-            COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+            COMMAND ${CMAKE_COMMAND} -E env
+                    "PYTHONPATH=${CODFISH_PYTHON_PACKAGE_DIR}"
+                    "CODFISH_LEARNER_GOLDEN_CHUNK_WRITER=$<TARGET_FILE:learner_raw_chunk_golden_writer>"
+                    "${Python3_EXECUTABLE}" -m unittest discover
                     -s "${PROJECT_SOURCE_DIR}/python/tests" -p "test_*.py")
-        set_tests_properties(
-            learner_python_test
-            PROPERTIES ENVIRONMENT "PYTHONPATH=${CODFISH_PYTHON_PACKAGE_DIR}")
     endif()
 endif()
