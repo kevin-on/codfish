@@ -2,10 +2,12 @@ Index:
   StandardLibrary: No
 
 CompileFlags:
+  CompilationDatabase: build
   Add:
     - -Isrc
+    - -Isrc/actor/backends
+    - -Isrc/engine
     - -Isrc/lc0
     - -I/opt/homebrew/include
-    - -DNO_PEXT # Remove this once we have a PEXT-enabled build
     - -xc++
     - -std=c++23
