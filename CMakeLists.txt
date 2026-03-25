@@ -19,6 +19,7 @@ set(CODFISH_PRODUCTION_SOURCES
     src/actor/mcts/search_coordinator.cc
     src/actor/mcts/searchers/gumbel/gumbel_mcts.cc
     src/engine/encoder.cc
+    src/learner/sample_facade.cc
     src/learner/storage_facade.cc
     src/lc0/chess/board.cc
     src/lc0/chess/gamestate.cc
@@ -39,6 +40,7 @@ set(CODFISH_TEST_SOURCES
     src/actor/mcts/searchers/gumbel/gumbel_mcts_test.cc
     src/engine/encoder_test.cc
     src/learner/public_api_test.cc
+    src/learner/sample_facade_test.cc
     src/learner/storage_facade_test.cc
     src/lc0/chess/board_test.cc
     src/lc0/chess/position_test.cc
