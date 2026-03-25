@@ -9,6 +9,8 @@ Requirements:
 - CMake 3.23+
 - A C++23 compiler
 - GoogleTest available to CMake
+- Python 3, Python development headers, and NumPy only when
+  `CODFISH_BUILD_LEARNER_PYTHON=ON`
 
 On macOS with Homebrew, GoogleTest can be installed with:
 
@@ -28,6 +30,18 @@ cmake -S . -B build
 
 ```bash
 cmake -S . -B build -DCODFISH_ENABLE_PEXT=OFF
+```
+
+- Build the learner Python bindings as well:
+
+```bash
+cmake -S . -B build -DCODFISH_BUILD_LEARNER_PYTHON=ON
+```
+
+- Local Apple Silicon development with learner Python bindings:
+
+```bash
+cmake -S . -B build -DCODFISH_ENABLE_PEXT=OFF -DCODFISH_BUILD_LEARNER_PYTHON=ON
 ```
 
 Build after configuring:

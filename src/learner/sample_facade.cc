@@ -123,10 +123,6 @@ namespace engine::learner {
 
 EncodedGameSamples EncodeRawGame(const RawGame& raw_game) {
   EncodedGameSamples samples;
-  if (raw_game.plies.empty()) {
-    return samples;
-  }
-
   const std::vector<internal::EncodedSampleDraft> drafts =
       internal::BuildEncodedSampleDrafts(raw_game);
   samples.sample_count = static_cast<int>(drafts.size());

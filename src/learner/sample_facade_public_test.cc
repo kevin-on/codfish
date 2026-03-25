@@ -138,9 +138,9 @@ TEST(SampleFacadePublic, PreservesFlatteningOrderAcrossPlies) {
       1.0f);
 }
 
-TEST(SampleFacadePublic, ReturnsMetadataOnlyForEmptyGame) {
+TEST(SampleFacadePublic, ReturnsMetadataOnlyForValidEmptyGame) {
   const EncodedGameSamples samples =
-      EncodeRawGame(MakeRawGame(std::nullopt, lczero::GameResult::UNDECIDED, {}));
+      EncodeRawGame(MakeRawGame(std::nullopt, lczero::GameResult::DRAW, {}));
 
   EXPECT_EQ(samples.sample_count, 0);
   EXPECT_EQ(samples.input_channels, kInputPlanes);
@@ -148,6 +148,13 @@ TEST(SampleFacadePublic, ReturnsMetadataOnlyForEmptyGame) {
   EXPECT_TRUE(samples.inputs.empty());
   EXPECT_TRUE(samples.policy_targets.empty());
   EXPECT_TRUE(samples.wdl_targets.empty());
+}
+
+TEST(SampleFacadePublic, RejectsInvalidEmptyGame) {
+  EXPECT_THROW(static_cast<void>(
+                   EncodeRawGame(MakeRawGame(
+                       std::nullopt, lczero::GameResult::UNDECIDED, {}))),
+               std::runtime_error);
 }
 
 TEST(SampleFacadePublic, SurfacesInvalidRawGameErrors) {

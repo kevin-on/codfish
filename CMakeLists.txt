@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CODFISH_ENABLE_PEXT "Enable BMI2/PEXT-based move generation" ON)
+option(CODFISH_BUILD_LEARNER_PYTHON "Build Python learner bindings" OFF)
 
 set(CODFISH_PRODUCTION_SOURCES
     src/actor/backends/mock_backend.cc
@@ -65,6 +66,60 @@ target_include_directories(
 
 target_link_libraries(codfish_core PUBLIC Threads::Threads)
 
+if(CODFISH_BUILD_LEARNER_PYTHON)
+    find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+    set(Python_FIND_VIRTUALENV FIRST)
+    set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH
+        "Selected Python interpreter for nanobind" FORCE)
+    find_package(Python ${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}
+        COMPONENTS Interpreter Development.Module REQUIRED)
+
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" -c "import numpy"
+        RESULT_VARIABLE CODFISH_NUMPY_IMPORT_RESULT
+        ERROR_VARIABLE CODFISH_NUMPY_IMPORT_ERROR
+        OUTPUT_QUIET)
+    if(NOT CODFISH_NUMPY_IMPORT_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "CODFISH_BUILD_LEARNER_PYTHON=ON requires numpy for "
+            "${Python3_EXECUTABLE}: ${CODFISH_NUMPY_IMPORT_ERROR}")
+    endif()
+
+    include(FetchContent)
+    FetchContent_Declare(
+        nanobind
+        GIT_REPOSITORY https://github.com/wjakob/nanobind.git
+        GIT_TAG v2.9.2
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(nanobind)
+
+    set(CODFISH_PYTHON_PACKAGE_DIR "${PROJECT_BINARY_DIR}/python")
+    set(CODFISH_PYTHON_LEARNER_DIR
+        "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/learner")
+    file(MAKE_DIRECTORY "${CODFISH_PYTHON_LEARNER_DIR}")
+
+    configure_file(
+        "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
+        "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/__init__.py"
+        COPYONLY)
+    configure_file(
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
+        "${CODFISH_PYTHON_LEARNER_DIR}/__init__.py"
+        COPYONLY)
+    configure_file(
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
+        "${CODFISH_PYTHON_LEARNER_DIR}/_api.py"
+        COPYONLY)
+
+    nanobind_add_module(_native src/learner/python_bindings.cc)
+    target_link_libraries(_native PRIVATE codfish_core)
+    set_target_properties(
+        _native
+        PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CODFISH_PYTHON_LEARNER_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY "${CODFISH_PYTHON_LEARNER_DIR}")
+endif()
+
 set(CODFISH_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
 
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)
@@ -110,4 +165,14 @@ if(BUILD_TESTING)
     endforeach()
 
     set_tests_properties(search_coordinator_smoke_test PROPERTIES LABELS smoke)
+
+    if(CODFISH_BUILD_LEARNER_PYTHON)
+        add_test(
+            NAME learner_python_test
+            COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+                    -s "${PROJECT_SOURCE_DIR}/python/tests" -p "test_*.py")
+        set_tests_properties(
+            learner_python_test
+            PROPERTIES ENVIRONMENT "PYTHONPATH=${CODFISH_PYTHON_PACKAGE_DIR}")
+    endif()
 endif()

@@ -8,13 +8,17 @@
 .cursor/
 .claude/
 .cache/
+.venv/
 .tmp_test_bin/
 *.swp
 *.swo
 *~
+__pycache__/
+*.py[cod]
 
 # CMake and local build outputs
 /build/
+/build_*/
 /cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
