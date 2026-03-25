@@ -33,7 +33,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <sstream>
+#include <mutex>
 #include <type_traits>
 #include <utility>
 
@@ -272,6 +272,8 @@ static MagicParams bishop_magic_params[64];
 static BitBoard rook_attacks_table[102400];
 static BitBoard bishop_attacks_table[5248];
 
+std::once_flag magic_bitboards_once;
+
 namespace {
 constexpr bool IsOnBoard(int x) { return x >= 0 && x < 8; }
 constexpr bool IsOnBoard(int x, int y) { return IsOnBoard(x) && IsOnBoard(y); }
@@ -389,8 +391,31 @@ static void BuildAttacksTable(MagicParams* magic_params,
 
 // Returns the rook attacks bitboard for the given rook board square and the
 // given occupied piece bitboard.
+static void InitializeMagicBitboardsImpl() {
+#if defined(NO_PEXT)
+  // Set magic numbers for all board squares.
+  for (unsigned square = 0; square < 64; square++) {
+    rook_magic_params[square].magic_number_ =
+        kRookMagicNumbers[square].as_int();
+    bishop_magic_params[square].magic_number_ =
+        kBishopMagicNumbers[square].as_int();
+  }
+#endif
+
+  // Build attacks tables.
+  BuildAttacksTable(rook_magic_params, rook_attacks_table, kRookDirections);
+  BuildAttacksTable(bishop_magic_params, bishop_attacks_table,
+                    kBishopDirections);
+}
+
+static void EnsureMagicBitboardsInitialized() {
+  std::call_once(magic_bitboards_once, InitializeMagicBitboardsImpl);
+}
+
 static inline BitBoard GetRookAttacks(const Square rook_square,
                                       const BitBoard pieces) {
+  EnsureMagicBitboardsInitialized();
+
   // Calculate magic index.
   const uint8_t square = rook_square.as_idx();
 
@@ -410,6 +435,8 @@ static inline BitBoard GetRookAttacks(const Square rook_square,
 // the given occupied piece bitboard.
 static inline BitBoard GetBishopAttacks(const Square bishop_square,
                                         const BitBoard pieces) {
+  EnsureMagicBitboardsInitialized();
+
   // Calculate magic index.
   const uint8_t square = bishop_square.as_idx();
 
@@ -428,22 +455,7 @@ static inline BitBoard GetBishopAttacks(const Square bishop_square,
 
 }  // namespace
 
-void InitializeMagicBitboards() {
-#if defined(NO_PEXT)
-  // Set magic numbers for all board squares.
-  for (unsigned square = 0; square < 64; square++) {
-    rook_magic_params[square].magic_number_ =
-        kRookMagicNumbers[square].as_int();
-    bishop_magic_params[square].magic_number_ =
-        kBishopMagicNumbers[square].as_int();
-  }
-#endif
-
-  // Build attacks tables.
-  BuildAttacksTable(rook_magic_params, rook_attacks_table, kRookDirections);
-  BuildAttacksTable(bishop_magic_params, bishop_attacks_table,
-                    kBishopDirections);
-}
+void InitializeMagicBitboards() { EnsureMagicBitboardsInitialized(); }
 
 MoveList ChessBoard::GeneratePseudolegalMoves() const {
   MoveList result;
