@@ -6,8 +6,8 @@
 #include <mutex>
 #include <thread>
 
-#include "runtime_types.h"
-#include "thread_safe_queue.h"
+#include "actor/mcts/primitives/thread_safe_queue.h"
+#include "actor/mcts/training_types.h"
 
 namespace engine {
 

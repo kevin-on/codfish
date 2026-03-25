@@ -1,4 +1,4 @@
-#include "inference_runtime.h"
+#include "actor/mcts/runtime/inference_runtime.h"
 
 #include <cassert>
 #include <cstddef>

@@ -1,4 +1,4 @@
-#include "game_runner.h"
+#include "actor/mcts/runtime/game_runner.h"
 
 #include <chrono>
 #include <future>

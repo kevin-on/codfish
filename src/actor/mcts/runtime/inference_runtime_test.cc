@@ -1,14 +1,10 @@
-#include "inference_runtime.h"
+#include "actor/mcts/runtime/inference_runtime.h"
 
 #include <gtest/gtest.h>
 
 #include <memory>
 #include <utility>
 #include <vector>
-
-namespace lczero {
-const BitBoard ChessBoard::kPawnMask = 0x00FFFFFFFFFFFF00ULL;
-}  // namespace lczero
 
 namespace engine {
 namespace {

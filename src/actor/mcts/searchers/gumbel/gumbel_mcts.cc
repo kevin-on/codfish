@@ -1,4 +1,4 @@
-#include "gumbel.h"
+#include "actor/mcts/searchers/gumbel/gumbel_mcts.h"
 
 #include <algorithm>
 #include <array>

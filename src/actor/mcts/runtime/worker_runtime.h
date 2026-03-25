@@ -3,8 +3,8 @@
 #include <mutex>
 #include <thread>
 
-#include "runtime_types.h"
-#include "thread_safe_queue.h"
+#include "actor/mcts/primitives/thread_safe_queue.h"
+#include "actor/mcts/runtime/task_types.h"
 
 namespace engine {
 

@@ -5,7 +5,8 @@
 #include <optional>
 #include <vector>
 
-#include "searcher.h"
+#include "actor/mcts/searcher.h"
+#include "actor/mcts/training_types.h"
 
 namespace engine {
 
@@ -13,18 +14,6 @@ enum class TaskState : uint8_t {
   kNew,
   kWaitingEval,
   kReady,
-};
-
-struct TrainingSampleDraft {
-  lczero::PositionHistory root_history;
-  lczero::Move selected_move;
-  std::vector<lczero::Move> legal_moves;
-  std::vector<float> improved_policy;
-};
-
-struct CompletedGame {
-  std::vector<TrainingSampleDraft> sample_drafts;
-  lczero::GameResult game_result = lczero::GameResult::UNDECIDED;
 };
 
 struct GameTask {

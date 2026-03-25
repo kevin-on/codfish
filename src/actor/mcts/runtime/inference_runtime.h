@@ -5,11 +5,11 @@
 #include <mutex>
 #include <thread>
 
+#include "actor/mcts/primitives/thread_safe_queue.h"
+#include "actor/mcts/runtime/task_types.h"
 #include "engine/encoder.h"
 #include "engine/infer/inference_backend.h"
 #include "engine/infer/model_manifest.h"
-#include "runtime_types.h"
-#include "thread_safe_queue.h"
 
 namespace engine {
 

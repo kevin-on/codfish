@@ -1,4 +1,4 @@
-#include "raw_chunk_format.h"
+#include "actor/mcts/output/raw_chunk_format.h"
 
 #include <gtest/gtest.h>
 

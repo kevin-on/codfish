@@ -1,4 +1,4 @@
-#include "chunk_writer_runtime.h"
+#include "actor/mcts/output/chunk_writer_runtime.h"
 
 #include <gtest/gtest.h>
 
@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "chess/position.h"
-#include "raw_chunk_format.h"
+#include "actor/mcts/output/raw_chunk_format.h"
 
 namespace engine {
 namespace {

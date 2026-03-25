@@ -6,15 +6,15 @@
 #include <mutex>
 #include <optional>
 
-#include "chunk_writer_runtime.h"
+#include "actor/mcts/output/chunk_writer_runtime.h"
+#include "actor/mcts/primitives/thread_safe_queue.h"
+#include "actor/mcts/runtime/game_runner.h"
+#include "actor/mcts/runtime/inference_runtime.h"
+#include "actor/mcts/runtime/task_types.h"
+#include "actor/mcts/runtime/worker_runtime.h"
 #include "engine/encoder.h"
 #include "engine/infer/inference_backend.h"
 #include "engine/infer/model_manifest.h"
-#include "game_runner.h"
-#include "inference_runtime.h"
-#include "runtime_types.h"
-#include "thread_safe_queue.h"
-#include "worker_runtime.h"
 
 namespace engine {
 

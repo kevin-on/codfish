@@ -1,4 +1,4 @@
-#include "search_coordinator.h"
+#include "actor/mcts/search_coordinator.h"
 
 #include <gtest/gtest.h>
 
@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "actor/backends/mock_backend.h"
-#include "raw_chunk_format.h"
+#include "actor/mcts/output/raw_chunk_format.h"
 
 namespace engine {
 namespace {

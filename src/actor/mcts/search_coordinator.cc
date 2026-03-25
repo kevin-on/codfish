@@ -1,4 +1,4 @@
-#include "search_coordinator.h"
+#include "actor/mcts/search_coordinator.h"
 
 #include <cassert>
 #include <utility>
