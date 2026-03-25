@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -13,14 +14,16 @@ namespace engine::raw_chunk_format {
 
 inline constexpr std::array<char, 4> kChunkMagic = {'C', 'F', 'R', 'G'};
 inline constexpr uint32_t kChunkVersion = 1;
+// Absolute UCI like e2e4 or a7a8q.
+inline constexpr std::size_t kStoredMoveUciBytes = 5;
 
 struct StoredPolicyEntry {
-  uint16_t move_raw = 0;
+  std::string move_uci;
   float prob = 0.0f;
 };
 
 struct StoredPly {
-  uint16_t selected_move_raw = 0;
+  std::string selected_move_uci;
   std::vector<StoredPolicyEntry> policy;
 };
 

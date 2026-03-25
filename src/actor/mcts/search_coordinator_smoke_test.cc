@@ -70,7 +70,7 @@ std::optional<raw_chunk_format::ParsedChunk> TryReadChunk(
 
 bool SelectedMoveIsInPolicy(const raw_chunk_format::StoredPly& ply) {
   for (const raw_chunk_format::StoredPolicyEntry& entry : ply.policy) {
-    if (entry.move_raw == ply.selected_move_raw) return true;
+    if (entry.move_uci == ply.selected_move_uci) return true;
   }
   return false;
 }

@@ -79,7 +79,7 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
                               std::istreambuf_iterator<char>());
 }
 
-uint16_t ReadFirstSelectedMoveRaw(const std::filesystem::path& path) {
+std::string ReadFirstSelectedMoveUci(const std::filesystem::path& path) {
   const std::vector<uint8_t> bytes = ReadFileBytes(path);
   const raw_chunk_format::ParsedChunk chunk =
       raw_chunk_format::ParseChunk(bytes);
@@ -89,7 +89,7 @@ uint16_t ReadFirstSelectedMoveRaw(const std::filesystem::path& path) {
   if (chunk.records.empty() || chunk.records.front().plies.empty()) {
     throw std::runtime_error("missing ply data");
   }
-  return chunk.records.front().plies.front().selected_move_raw;
+  return chunk.records.front().plies.front().selected_move_uci;
 }
 
 class ImmediateTerminalSearcher final : public MCTSSearcher {
@@ -306,7 +306,7 @@ TEST(SearchCoordinator, RawOutputDirStartsWriterAndPersistsCompletedGame) {
   const std::filesystem::path chunk_path =
       temp_dir.path / raw_chunk_format::ChunkFileName(1);
   ASSERT_TRUE(std::filesystem::exists(chunk_path));
-  EXPECT_EQ(ReadFirstSelectedMoveRaw(chunk_path), expected_move.raw_data());
+  EXPECT_EQ(ReadFirstSelectedMoveUci(chunk_path), "e2e4");
 }
 
 }  // namespace

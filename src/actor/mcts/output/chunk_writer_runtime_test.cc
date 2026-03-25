@@ -48,11 +48,11 @@ raw_chunk_format::ParsedChunk ReadChunk(const std::filesystem::path& path) {
   return raw_chunk_format::ParseChunk(bytes);
 }
 
-uint16_t FirstSelectedMoveRaw(const raw_chunk_format::ParsedChunk& chunk) {
+std::string FirstSelectedMoveUci(const raw_chunk_format::ParsedChunk& chunk) {
   if (chunk.records.empty() || chunk.records.front().plies.empty()) {
     throw std::runtime_error("missing first selected move");
   }
-  return chunk.records.front().plies.front().selected_move_raw;
+  return chunk.records.front().plies.front().selected_move_uci;
 }
 
 lczero::Move ParseMove(const lczero::Position& position, const char* uci) {
@@ -99,8 +99,6 @@ TEST(ChunkWriterRuntime, WritesCompletedGamesIntoChunkFile) {
   writer.Start();
 
   constexpr std::string_view kFen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
-  const lczero::Move expected_first_move =
-      ParseMove(MakeHistory(kFen).Last(), "e2e3");
 
   ASSERT_TRUE(completed_game_queue.push(
       MakeSinglePlyCompletedGame(kFen, "e2e3", lczero::GameResult::WHITE_WON)));
@@ -118,7 +116,7 @@ TEST(ChunkWriterRuntime, WritesCompletedGamesIntoChunkFile) {
   const raw_chunk_format::ParsedChunk chunk = ReadChunk(chunk_path);
   EXPECT_EQ(chunk.version, raw_chunk_format::kChunkVersion);
   ASSERT_EQ(chunk.records.size(), 2u);
-  EXPECT_EQ(FirstSelectedMoveRaw(chunk), expected_first_move.raw_data());
+  EXPECT_EQ(FirstSelectedMoveUci(chunk), "e2e3");
   EXPECT_EQ(chunk.records[0].game_result, lczero::GameResult::WHITE_WON);
   EXPECT_FALSE(chunk.records[1].initial_fen.has_value());
   EXPECT_EQ(chunk.records[1].game_result, lczero::GameResult::DRAW);
@@ -138,10 +136,6 @@ TEST(ChunkWriterRuntime, RotatesChunkFilesWhenMaxChunkBytesIsExceeded) {
 
   constexpr std::string_view kFirstFen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
   constexpr std::string_view kSecondFen = "4k3/8/8/8/8/8/3P4/4K3 w - - 0 1";
-  const lczero::Move first_selected =
-      ParseMove(MakeHistory(kFirstFen).Last(), "e2e3");
-  const lczero::Move second_selected =
-      ParseMove(MakeHistory(kSecondFen).Last(), "d2d3");
   ASSERT_TRUE(completed_game_queue.push(MakeSinglePlyCompletedGame(
       kFirstFen, "e2e3", lczero::GameResult::WHITE_WON)));
   ASSERT_TRUE(completed_game_queue.push(MakeSinglePlyCompletedGame(
@@ -160,8 +154,8 @@ TEST(ChunkWriterRuntime, RotatesChunkFilesWhenMaxChunkBytesIsExceeded) {
   const raw_chunk_format::ParsedChunk second_parsed = ReadChunk(second_chunk);
   ASSERT_EQ(first_parsed.records.size(), 1u);
   ASSERT_EQ(second_parsed.records.size(), 1u);
-  EXPECT_EQ(FirstSelectedMoveRaw(first_parsed), first_selected.raw_data());
-  EXPECT_EQ(FirstSelectedMoveRaw(second_parsed), second_selected.raw_data());
+  EXPECT_EQ(FirstSelectedMoveUci(first_parsed), "e2e3");
+  EXPECT_EQ(FirstSelectedMoveUci(second_parsed), "d2d3");
 }
 
 TEST(ChunkWriterRuntime, StopIsSafeWithNoGames) {
@@ -192,12 +186,6 @@ TEST(ChunkWriterRuntime, PreservesCompletedGameOrderAcrossChunks) {
   constexpr std::string_view kFirstFen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
   constexpr std::string_view kSecondFen = "4k3/8/8/8/8/8/3P4/4K3 w - - 0 1";
   constexpr std::string_view kThirdFen = "4k3/8/8/8/8/8/2P5/4K3 w - - 0 1";
-  const lczero::Move first_selected =
-      ParseMove(MakeHistory(kFirstFen).Last(), "e2e3");
-  const lczero::Move second_selected =
-      ParseMove(MakeHistory(kSecondFen).Last(), "d2d3");
-  const lczero::Move third_selected =
-      ParseMove(MakeHistory(kThirdFen).Last(), "c2c3");
 
   ASSERT_TRUE(completed_game_queue.push(
       MakeSinglePlyCompletedGame(kFirstFen, "e2e3", lczero::GameResult::DRAW)));
@@ -215,9 +203,58 @@ TEST(ChunkWriterRuntime, PreservesCompletedGameOrderAcrossChunks) {
   const raw_chunk_format::ParsedChunk third_chunk =
       ReadChunk(temp_dir.path / raw_chunk_format::ChunkFileName(3));
 
-  EXPECT_EQ(FirstSelectedMoveRaw(first_chunk), first_selected.raw_data());
-  EXPECT_EQ(FirstSelectedMoveRaw(second_chunk), second_selected.raw_data());
-  EXPECT_EQ(FirstSelectedMoveRaw(third_chunk), third_selected.raw_data());
+  EXPECT_EQ(FirstSelectedMoveUci(first_chunk), "e2e3");
+  EXPECT_EQ(FirstSelectedMoveUci(second_chunk), "d2d3");
+  EXPECT_EQ(FirstSelectedMoveUci(third_chunk), "c2c3");
+}
+
+TEST(ChunkWriterRuntime, WritesAbsoluteUciForBlackToMoveMoves) {
+  ScopedTempDir temp_dir;
+  ThreadSafeQueue<CompletedGame> completed_game_queue;
+  ChunkWriterRuntime writer(
+      ChunkWriterChannels{.completed_game_queue = &completed_game_queue},
+      ChunkWriterOptions{.output_dir = temp_dir.path});
+  writer.Start();
+
+  constexpr std::string_view kFen =
+      "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  ASSERT_TRUE(completed_game_queue.push(
+      MakeSinglePlyCompletedGame(kFen, "e7e5", lczero::GameResult::DRAW)));
+
+  writer.Stop();
+
+  const raw_chunk_format::ParsedChunk chunk =
+      ReadChunk(temp_dir.path / raw_chunk_format::ChunkFileName(1));
+  ASSERT_EQ(chunk.records.size(), 1u);
+  ASSERT_EQ(chunk.records.front().plies.size(), 1u);
+  EXPECT_EQ(chunk.records.front().plies.front().selected_move_uci, "e7e5");
+  ASSERT_EQ(chunk.records.front().plies.front().policy.size(), 1u);
+  EXPECT_EQ(chunk.records.front().plies.front().policy.front().move_uci,
+            "e7e5");
+}
+
+TEST(ChunkWriterRuntime, WritesAbsoluteUciForBlackCastling) {
+  ScopedTempDir temp_dir;
+  ThreadSafeQueue<CompletedGame> completed_game_queue;
+  ChunkWriterRuntime writer(
+      ChunkWriterChannels{.completed_game_queue = &completed_game_queue},
+      ChunkWriterOptions{.output_dir = temp_dir.path});
+  writer.Start();
+
+  constexpr std::string_view kFen = "4k2r/8/8/8/8/8/8/4K3 b k - 0 1";
+  ASSERT_TRUE(completed_game_queue.push(
+      MakeSinglePlyCompletedGame(kFen, "e8g8", lczero::GameResult::DRAW)));
+
+  writer.Stop();
+
+  const raw_chunk_format::ParsedChunk chunk =
+      ReadChunk(temp_dir.path / raw_chunk_format::ChunkFileName(1));
+  ASSERT_EQ(chunk.records.size(), 1u);
+  ASSERT_EQ(chunk.records.front().plies.size(), 1u);
+  EXPECT_EQ(chunk.records.front().plies.front().selected_move_uci, "e8g8");
+  ASSERT_EQ(chunk.records.front().plies.front().policy.size(), 1u);
+  EXPECT_EQ(chunk.records.front().plies.front().policy.front().move_uci,
+            "e8g8");
 }
 
 }  // namespace

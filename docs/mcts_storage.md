@@ -21,6 +21,7 @@ At the semantic level, storage keeps:
 
 - the played trajectory,
 - the search policy over legal moves at each sampled root,
+  keyed by standard absolute UCI move strings,
 - the final game result,
 - the initial position when available.
 

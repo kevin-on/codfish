@@ -13,6 +13,12 @@
 namespace engine {
 namespace {
 
+std::string MoveToAbsoluteUci(const lczero::Position& position,
+                              lczero::Move move) {
+  if (position.GetBoard().flipped()) move.Flip();
+  return move.ToString(false);
+}
+
 std::optional<std::string> ExtractInitialFen(const CompletedGame& completed) {
   if (completed.sample_drafts.empty()) return std::nullopt;
   if (completed.sample_drafts.front().root_history.GetLength() == 0) {
@@ -32,13 +38,15 @@ raw_chunk_format::StoredRawGame BuildStoredRawGame(
   raw_game.plies.reserve(completed.sample_drafts.size());
   for (const TrainingSampleDraft& draft : completed.sample_drafts) {
     assert(draft.legal_moves.size() == draft.improved_policy.size());
+    assert(draft.root_history.GetLength() > 0);
+    const lczero::Position& root_position = draft.root_history.Last();
 
     raw_chunk_format::StoredPly ply;
-    ply.selected_move_raw = draft.selected_move.raw_data();
+    ply.selected_move_uci = MoveToAbsoluteUci(root_position, draft.selected_move);
     ply.policy.reserve(draft.legal_moves.size());
     for (std::size_t i = 0; i < draft.legal_moves.size(); ++i) {
       ply.policy.push_back(raw_chunk_format::StoredPolicyEntry{
-          .move_raw = draft.legal_moves[i].raw_data(),
+          .move_uci = MoveToAbsoluteUci(root_position, draft.legal_moves[i]),
           .prob = draft.improved_policy[i],
       });
     }

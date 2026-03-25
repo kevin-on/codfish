@@ -35,12 +35,12 @@ void ExpectStoredRawGameEq(const StoredRawGame& actual,
   for (std::size_t i = 0; i < expected.plies.size(); ++i) {
     const StoredPly& actual_ply = actual.plies[i];
     const StoredPly& expected_ply = expected.plies[i];
-    EXPECT_EQ(actual_ply.selected_move_raw, expected_ply.selected_move_raw);
+    EXPECT_EQ(actual_ply.selected_move_uci, expected_ply.selected_move_uci);
     ASSERT_EQ(actual_ply.policy.size(), expected_ply.policy.size());
     for (std::size_t j = 0; j < expected_ply.policy.size(); ++j) {
       const StoredPolicyEntry& actual_entry = actual_ply.policy[j];
       const StoredPolicyEntry& expected_entry = expected_ply.policy[j];
-      EXPECT_EQ(actual_entry.move_raw, expected_entry.move_raw);
+      EXPECT_EQ(actual_entry.move_uci, expected_entry.move_uci);
       EXPECT_FLOAT_EQ(actual_entry.prob, expected_entry.prob);
     }
   }
@@ -61,18 +61,18 @@ TEST(RawChunkFormat, RoundTripsSingleGameRecord) {
       "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", lczero::GameResult::WHITE_WON,
       {
           StoredPly{
-              .selected_move_raw = 101,
+              .selected_move_uci = "e2e4",
               .policy =
                   {
-                      StoredPolicyEntry{.move_raw = 101, .prob = 0.75f},
-                      StoredPolicyEntry{.move_raw = 102, .prob = 0.25f},
+                      StoredPolicyEntry{.move_uci = "e2e4", .prob = 0.75f},
+                      StoredPolicyEntry{.move_uci = "e7e8q", .prob = 0.25f},
                   },
           },
           StoredPly{
-              .selected_move_raw = 203,
+              .selected_move_uci = "a7a8q",
               .policy =
                   {
-                      StoredPolicyEntry{.move_raw = 203, .prob = 1.0f},
+                      StoredPolicyEntry{.move_uci = "a7a8q", .prob = 1.0f},
                   },
           },
       });
@@ -90,11 +90,11 @@ TEST(RawChunkFormat, RoundTripsChunkWithMultipleRecords) {
       "startpos fen", lczero::GameResult::DRAW,
       {
           StoredPly{
-              .selected_move_raw = 17,
+              .selected_move_uci = "g1f3",
               .policy =
                   {
-                      StoredPolicyEntry{.move_raw = 17, .prob = 0.6f},
-                      StoredPolicyEntry{.move_raw = 18, .prob = 0.4f},
+                      StoredPolicyEntry{.move_uci = "g1f3", .prob = 0.6f},
+                      StoredPolicyEntry{.move_uci = "d2d4", .prob = 0.4f},
                   },
           },
       });
@@ -125,10 +125,10 @@ TEST(RawChunkFormat, RejectsTruncatedRecord) {
       "fen", lczero::GameResult::WHITE_WON,
       {
           StoredPly{
-              .selected_move_raw = 9,
+              .selected_move_uci = "e2e4",
               .policy =
                   {
-                      StoredPolicyEntry{.move_raw = 9, .prob = 1.0f},
+                      StoredPolicyEntry{.move_uci = "e2e4", .prob = 1.0f},
                   },
           },
       });
@@ -144,10 +144,10 @@ TEST(RawChunkFormat, RejectsCorruptedRecordLength) {
       "fen", lczero::GameResult::DRAW,
       {
           StoredPly{
-              .selected_move_raw = 31,
+              .selected_move_uci = "b1c3",
               .policy =
                   {
-                      StoredPolicyEntry{.move_raw = 31, .prob = 1.0f},
+                      StoredPolicyEntry{.move_uci = "b1c3", .prob = 1.0f},
                   },
           },
       });

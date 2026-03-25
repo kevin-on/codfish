@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -41,6 +42,16 @@ void AppendFloat32(std::vector<char>* buffer, float value) {
 
 void AppendBytes(std::vector<char>* buffer, std::string_view value) {
   buffer->insert(buffer->end(), value.begin(), value.end());
+}
+
+void AppendStoredMoveUci(std::vector<char>* buffer, std::string_view uci) {
+  if (uci.size() < 4 || uci.size() > kStoredMoveUciBytes) {
+    throw std::runtime_error("bad stored move uci length");
+  }
+  buffer->insert(buffer->end(), uci.begin(), uci.end());
+  for (std::size_t i = uci.size(); i < kStoredMoveUciBytes; ++i) {
+    buffer->push_back('\0');
+  }
 }
 
 void RequireRemaining(std::span<const uint8_t> bytes, std::size_t offset,
@@ -90,11 +101,28 @@ std::string ReadString(std::span<const uint8_t> bytes, std::size_t* offset,
   return value;
 }
 
+std::string ReadStoredMoveUci(std::span<const uint8_t> bytes,
+                              std::size_t* offset) {
+  RequireRemaining(bytes, *offset, kStoredMoveUciBytes);
+  const char* begin = reinterpret_cast<const char*>(bytes.data() + *offset);
+  const std::string_view encoded(begin, kStoredMoveUciBytes);
+  *offset += kStoredMoveUciBytes;
+
+  if (encoded[0] == '\0' || encoded[1] == '\0' || encoded[2] == '\0' ||
+      encoded[3] == '\0') {
+    throw std::runtime_error("bad stored move uci");
+  }
+  if (encoded[4] == '\0') {
+    return std::string(encoded.substr(0, 4));
+  }
+  return std::string(encoded);
+}
+
 void SerializeStoredPly(const StoredPly& ply, std::vector<char>* record) {
-  AppendUint16(record, ply.selected_move_raw);
+  AppendStoredMoveUci(record, ply.selected_move_uci);
   AppendUint32(record, ToUint32(ply.policy.size()));
   for (const StoredPolicyEntry& entry : ply.policy) {
-    AppendUint16(record, entry.move_raw);
+    AppendStoredMoveUci(record, entry.move_uci);
     AppendFloat32(record, entry.prob);
   }
 }
@@ -117,13 +145,13 @@ StoredRawGame ParseStoredRawGameRecord(std::span<const uint8_t> bytes) {
   raw_game.plies.reserve(num_plies);
   for (uint32_t ply_idx = 0; ply_idx < num_plies; ++ply_idx) {
     StoredPly ply;
-    ply.selected_move_raw = ReadUint16(bytes, &offset);
+    ply.selected_move_uci = ReadStoredMoveUci(bytes, &offset);
 
     const uint32_t policy_size = ReadUint32(bytes, &offset);
     ply.policy.reserve(policy_size);
     for (uint32_t policy_idx = 0; policy_idx < policy_size; ++policy_idx) {
       ply.policy.push_back(StoredPolicyEntry{
-          .move_raw = ReadUint16(bytes, &offset),
+          .move_uci = ReadStoredMoveUci(bytes, &offset),
           .prob = ReadFloat32(bytes, &offset),
       });
     }
@@ -194,6 +222,9 @@ ParsedChunk ParseChunk(std::span<const uint8_t> bytes) {
 
   ParsedChunk chunk;
   chunk.version = ReadUint32(bytes, &offset);
+  if (chunk.version != kChunkVersion) {
+    throw std::runtime_error("unsupported raw chunk version");
+  }
   while (offset < bytes.size()) {
     const uint32_t record_len = ReadUint32(bytes, &offset);
     RequireRemaining(bytes, offset, record_len);
