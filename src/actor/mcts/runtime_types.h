@@ -17,6 +17,7 @@ enum class TaskState : uint8_t {
 
 struct TrainingSampleDraft {
   lczero::PositionHistory root_history;
+  lczero::Move selected_move;
   std::vector<lczero::Move> legal_moves;
   std::vector<float> improved_policy;
 };

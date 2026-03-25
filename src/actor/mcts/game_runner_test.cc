@@ -88,6 +88,7 @@ TEST(GameRunner, NonTerminalResultAppendsDraftCommitsMoveAndRequeuesTask) {
   EXPECT_FALSE((*requeued)->response.has_value());
   ASSERT_EQ((*requeued)->training_sample_drafts.size(), 1u);
   EXPECT_EQ((*requeued)->training_sample_drafts[0].root_history.GetLength(), 1);
+  EXPECT_EQ((*requeued)->training_sample_drafts[0].selected_move, move);
   ASSERT_EQ((*requeued)->training_sample_drafts[0].legal_moves.size(), 1u);
   EXPECT_EQ((*requeued)->training_sample_drafts[0].legal_moves[0], move);
   ASSERT_EQ((*requeued)->training_sample_drafts[0].improved_policy.size(), 1u);
@@ -117,6 +118,7 @@ TEST(GameRunner, TerminalResultBuildsCompletedGameAndHandsItOff) {
   const lczero::Move move = ParseMove("d2d4");
   task->training_sample_drafts.push_back(TrainingSampleDraft{
       .root_history = MakeStartHistory(),
+      .selected_move = move,
       .legal_moves = {move},
       .improved_policy = {0.75f},
   });
@@ -134,6 +136,7 @@ TEST(GameRunner, TerminalResultBuildsCompletedGameAndHandsItOff) {
   EXPECT_EQ(completed_game->game_result, lczero::GameResult::WHITE_WON);
   ASSERT_EQ(completed_game->sample_drafts.size(), 1u);
   EXPECT_EQ(completed_game->sample_drafts[0].root_history.GetLength(), 1);
+  EXPECT_EQ(completed_game->sample_drafts[0].selected_move, move);
   ASSERT_EQ(completed_game->sample_drafts[0].legal_moves.size(), 1u);
   EXPECT_EQ(completed_game->sample_drafts[0].legal_moves[0], move);
   ASSERT_EQ(completed_game->sample_drafts[0].improved_policy.size(), 1u);

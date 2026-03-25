@@ -1,16 +1,25 @@
 #include "search_coordinator.h"
 
-#include <cassert>
-#include <atomic>
-#include <chrono>
-#include <functional>
-#include <memory>
-#include <thread>
-#include <utility>
-
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
 #include "actor/backends/mock_backend.h"
+#include "raw_chunk_format.h"
 
 namespace engine {
 namespace {
@@ -21,7 +30,22 @@ struct Probe {
   std::atomic<int> created{0};
   std::atomic<int> run_started{0};
   std::atomic<int> replies_seen{0};
+  std::atomic<int> committed{0};
   std::atomic<int> destroyed{0};
+};
+
+struct ScopedTempDir {
+  ScopedTempDir() {
+    path = std::filesystem::temp_directory_path() /
+           ("codfish_search_coordinator_test_" +
+            std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(path);
+  }
+
+  ~ScopedTempDir() { std::filesystem::remove_all(path); }
+
+  std::filesystem::path path;
 };
 
 bool WaitUntil(const std::function<bool()>& predicate,
@@ -32,6 +56,40 @@ bool WaitUntil(const std::function<bool()>& predicate,
     std::this_thread::sleep_for(10ms);
   }
   return predicate();
+}
+
+lczero::PositionHistory MakeStartHistory() {
+  lczero::PositionHistory history;
+  history.Reset(lczero::Position::FromFen(lczero::ChessBoard::kStartposFen));
+  return history;
+}
+
+lczero::Move ParseStartMove(const char* uci) {
+  const lczero::Position start =
+      lczero::Position::FromFen(lczero::ChessBoard::kStartposFen);
+  return start.GetBoard().ParseMove(uci);
+}
+
+std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream.is_open()) {
+    throw std::runtime_error("failed to open chunk file");
+  }
+  return std::vector<uint8_t>(std::istreambuf_iterator<char>(stream),
+                              std::istreambuf_iterator<char>());
+}
+
+uint16_t ReadFirstSelectedMoveRaw(const std::filesystem::path& path) {
+  const std::vector<uint8_t> bytes = ReadFileBytes(path);
+  const raw_chunk_format::ParsedChunk chunk =
+      raw_chunk_format::ParseChunk(bytes);
+  if (chunk.version != raw_chunk_format::kChunkVersion) {
+    throw std::runtime_error("unexpected chunk version");
+  }
+  if (chunk.records.empty() || chunk.records.front().plies.empty()) {
+    throw std::runtime_error("missing ply data");
+  }
+  return chunk.records.front().plies.front().selected_move_raw;
 }
 
 class ImmediateTerminalSearcher final : public MCTSSearcher {
@@ -78,6 +136,40 @@ class YieldOnceTerminalSearcher final : public MCTSSearcher {
 
  private:
   Probe* probe_ = nullptr;
+};
+
+class NonTerminalThenTerminalSearcher final : public MCTSSearcher {
+ public:
+  explicit NonTerminalThenTerminalSearcher(Probe* probe)
+      : probe_(probe), selected_move_(ParseStartMove("e2e4")) {}
+  ~NonTerminalThenTerminalSearcher() override { ++probe_->destroyed; }
+
+  SearchCoroutine Run() override {
+    ++probe_->run_started;
+    SearchResult result;
+    if (!committed_) {
+      result.root_history = MakeStartHistory();
+      result.selected_move = selected_move_;
+      result.legal_moves = {selected_move_};
+      result.improved_policy = {1.0f};
+      co_return result;
+    }
+
+    result.game_result = lczero::GameResult::DRAW;
+    co_return result;
+  }
+
+  void CommitMove(lczero::Move move) override {
+    assert(!committed_);
+    assert(move == selected_move_);
+    committed_ = true;
+    ++probe_->committed;
+  }
+
+ private:
+  Probe* probe_ = nullptr;
+  lczero::Move selected_move_;
+  bool committed_ = false;
 };
 
 template <typename Searcher>
@@ -178,6 +270,43 @@ TEST(SearchCoordinator, StopIsSafeWhenStartedIdle) {
   EXPECT_EQ(probe.run_started.load(), 0);
   EXPECT_EQ(probe.replies_seen.load(), 0);
   EXPECT_EQ(probe.destroyed.load(), 0);
+}
+
+TEST(SearchCoordinator, RawOutputDirStartsWriterAndPersistsCompletedGame) {
+  Probe probe;
+  ScopedTempDir temp_dir;
+  auto backend = std::make_shared<MockBackend>();
+  const FeatureEncoder encoder;
+  const lczero::Move expected_move = ParseStartMove("e2e4");
+
+  SearchCoordinator coordinator(
+      SearchCoordinatorOptions{
+          .num_workers = 1,
+          .num_initial_games = 1,
+          .raw_output_dir = temp_dir.path,
+          .inference =
+              InferenceRuntimeOptions{
+                  .max_batch_size = 1,
+                  .flush_timeout = 0ms,
+              },
+      },
+      std::make_unique<CountingTaskFactory<NonTerminalThenTerminalSearcher>>(
+          &probe),
+      backend, &encoder, ModelManifest{});
+
+  coordinator.Start();
+  ASSERT_TRUE(WaitUntil([&probe] { return probe.destroyed.load() == 1; }));
+  coordinator.Stop();
+
+  EXPECT_EQ(probe.created.load(), 1);
+  EXPECT_EQ(probe.run_started.load(), 2);
+  EXPECT_EQ(probe.committed.load(), 1);
+  EXPECT_EQ(probe.destroyed.load(), 1);
+
+  const std::filesystem::path chunk_path =
+      temp_dir.path / raw_chunk_format::ChunkFileName(1);
+  ASSERT_TRUE(std::filesystem::exists(chunk_path));
+  EXPECT_EQ(ReadFirstSelectedMoveRaw(chunk_path), expected_move.raw_data());
 }
 
 }  // namespace

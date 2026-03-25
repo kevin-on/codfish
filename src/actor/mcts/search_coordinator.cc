@@ -5,23 +5,22 @@
 
 namespace engine {
 
-SearchCoordinator::SearchCoordinator(SearchCoordinatorOptions options,
-                                     std::unique_ptr<GameTaskFactory> task_factory,
-                                     std::shared_ptr<InferenceBackend> backend,
-                                     const FeatureEncoder* encoder,
-                                     ModelManifest manifest)
+SearchCoordinator::SearchCoordinator(
+    SearchCoordinatorOptions options,
+    std::unique_ptr<GameTaskFactory> task_factory,
+    std::shared_ptr<InferenceBackend> backend, const FeatureEncoder* encoder,
+    ModelManifest manifest)
     : options_(options),
       task_factory_(std::move(task_factory)),
       backend_(std::move(backend)),
       encoder_(encoder),
       manifest_(manifest),
-      worker_runtime_(
-          options_.num_workers,
-          WorkerChannels{
-              .ready_queue = &ready_queue_,
-              .request_queue = &request_queue_,
-              .completion_queue = &completion_queue_,
-          }),
+      worker_runtime_(options_.num_workers,
+                      WorkerChannels{
+                          .ready_queue = &ready_queue_,
+                          .request_queue = &request_queue_,
+                          .completion_queue = &completion_queue_,
+                      }),
       inference_runtime_(
           InferenceChannels{
               .request_queue = &request_queue_,
@@ -38,6 +37,17 @@ SearchCoordinator::SearchCoordinator(SearchCoordinatorOptions options,
   assert(task_factory_ != nullptr);
   assert(backend_ != nullptr);
   assert(encoder_ != nullptr);
+
+  if (options_.raw_output_dir.has_value()) {
+    chunk_writer_runtime_ = std::make_unique<ChunkWriterRuntime>(
+        ChunkWriterChannels{
+            .completed_game_queue = &completed_game_queue_,
+        },
+        ChunkWriterOptions{
+            .output_dir = *options_.raw_output_dir,
+            .max_chunk_bytes = options_.raw_chunk_max_bytes,
+        });
+  }
 }
 
 SearchCoordinator::~SearchCoordinator() { Stop(); }
@@ -47,6 +57,9 @@ void SearchCoordinator::Start() {
   if (started_) return;
   if (stopped_) return;
 
+  if (chunk_writer_runtime_ != nullptr) {
+    chunk_writer_runtime_->Start();
+  }
   game_runner_.Start();
   inference_runtime_.Start();
   worker_runtime_.Start();
@@ -67,7 +80,11 @@ void SearchCoordinator::Stop() {
   worker_runtime_.Stop();
   inference_runtime_.Stop();
   game_runner_.Stop();
-  completed_game_queue_.close();
+  if (chunk_writer_runtime_ != nullptr) {
+    chunk_writer_runtime_->Stop();
+  } else {
+    completed_game_queue_.close();
+  }
 }
 
 void SearchCoordinator::SeedInitialTasks() {

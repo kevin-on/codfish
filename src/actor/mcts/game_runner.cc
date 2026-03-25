@@ -62,6 +62,7 @@ void GameRunner::RunLoop() {
              completed->result.improved_policy.size());
       task->training_sample_drafts.push_back(TrainingSampleDraft{
           .root_history = std::move(completed->result.root_history),
+          .selected_move = completed->result.selected_move,
           .legal_moves = std::move(completed->result.legal_moves),
           .improved_policy = std::move(completed->result.improved_policy),
       });

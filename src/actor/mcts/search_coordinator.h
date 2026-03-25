@@ -1,8 +1,12 @@
 #pragma once
 
+#include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 
+#include "chunk_writer_runtime.h"
 #include "engine/encoder.h"
 #include "engine/infer/inference_backend.h"
 #include "engine/infer/model_manifest.h"
@@ -23,6 +27,8 @@ class GameTaskFactory {
 struct SearchCoordinatorOptions {
   int num_workers = 0;
   int num_initial_games = 0;
+  std::optional<std::filesystem::path> raw_output_dir;
+  uint64_t raw_chunk_max_bytes = ChunkWriterOptions::kDefaultMaxChunkBytes;
   InferenceRuntimeOptions inference;
 };
 
@@ -57,6 +63,7 @@ class SearchCoordinator {
   WorkerRuntime worker_runtime_;
   InferenceRuntime inference_runtime_;
   GameRunner game_runner_;
+  std::unique_ptr<ChunkWriterRuntime> chunk_writer_runtime_;
   bool started_ = false;
   bool stopped_ = false;
   mutable std::mutex state_mu_;
