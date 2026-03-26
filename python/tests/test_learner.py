@@ -8,8 +8,10 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
+import torch
 
 from codfish.learner import (
     EncodedGameSamples,
@@ -20,9 +22,14 @@ from codfish.learner import (
     RawGame,
     RawPly,
     RawPolicyEntry,
+    TrainIterationReport,
+    TrainStepMetrics,
+    Trainer,
+    TrainerConfig,
     encode_raw_game,
     read_raw_chunk_file,
 )
+from codfish.learner._checkpoint import load_training_checkpoint
 
 
 CHUNK_MAGIC = b"CFRG"
@@ -116,6 +123,308 @@ def _write_chunk_file(path: pathlib.Path, raw_games: list[RawGame]) -> None:
 
 def _input_sha256(samples: EncodedGameSamples) -> str:
     return hashlib.sha256(samples.inputs.tobytes()).hexdigest()
+
+
+class TrainerTest(unittest.TestCase):
+    class _ToyModel(torch.nn.Module):
+        def __init__(self, policy_size: int) -> None:
+            super().__init__()
+            self.last_input_dtype = None
+            self.last_input_shape = None
+            self.policy_head = torch.nn.Linear(118 * 8 * 8, policy_size)
+            self.wdl_head = torch.nn.Linear(118 * 8 * 8, 3)
+
+        def forward(
+            self, inputs: torch.Tensor
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            self.last_input_dtype = inputs.dtype
+            self.last_input_shape = tuple(inputs.shape)
+            flat = inputs.reshape(inputs.shape[0], -1)
+            return self.policy_head(flat), self.wdl_head(flat)
+
+    class _BadShapeModel(torch.nn.Module):
+        def __init__(self, policy_size: int) -> None:
+            super().__init__()
+            self.policy_size = policy_size
+            self._dummy = torch.nn.Parameter(torch.zeros(1))
+
+        def forward(
+            self, inputs: torch.Tensor
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            batch = inputs.shape[0]
+            return (
+                torch.zeros((batch, self.policy_size - 1), dtype=torch.float32),
+                torch.zeros((batch, 3), dtype=torch.float32),
+            )
+
+    def _build_buffer(self, chunk_paths: list[pathlib.Path]) -> ReplayBuffer:
+        buffer = ReplayBuffer(
+            ReplayBufferConfig(
+                sample_capacity=8, batch_size=2, replay_ratio=1.5, seed=7
+            )
+        )
+        buffer.ingest_chunk_files(chunk_paths)
+        return buffer
+
+    def _build_trainer(
+        self, checkpoint_dir: pathlib.Path, policy_size: int
+    ) -> tuple[Trainer, torch.nn.Module]:
+        model = self._ToyModel(policy_size)
+        trainer = Trainer(
+            model,
+            TrainerConfig(
+                learning_rate=0.01,
+                optimizer_momentum=0.9,
+                optimizer_weight_decay=1e-4,
+                value_loss_weight=1.25,
+            ),
+            device="cpu",
+            checkpoint_dir=checkpoint_dir,
+        )
+        return trainer, model
+
+    def test_train_step_updates_model_and_casts_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, model = self._build_trainer(
+                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+            )
+
+            before = {
+                name: param.detach().clone()
+                for name, param in model.named_parameters()
+            }
+            metrics = trainer.train_step(buffer.sample_minibatch())
+
+        self.assertIsInstance(metrics, TrainStepMetrics)
+        self.assertTrue(np.isfinite(metrics.total_loss))
+        self.assertTrue(np.isfinite(metrics.policy_loss))
+        self.assertTrue(np.isfinite(metrics.wdl_loss))
+        self.assertEqual(trainer.global_learner_step, 1)
+        self.assertEqual(model.last_input_dtype, torch.float32)
+        self.assertEqual(model.last_input_shape, (2, 118, 8, 8))
+        self.assertTrue(
+            any(
+                not torch.equal(before[name], param.detach())
+                for name, param in model.named_parameters()
+            )
+        )
+
+    def test_train_step_raises_on_shape_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer = Trainer(
+                self._BadShapeModel(buffer.policy_size),
+                TrainerConfig(
+                    learning_rate=0.01,
+                    optimizer_momentum=0.9,
+                    optimizer_weight_decay=1e-4,
+                    value_loss_weight=1.25,
+                ),
+                device="cpu",
+                checkpoint_dir=tmp_dir,
+            )
+
+            with self.assertRaisesRegex(ValueError, "policy logits shape"):
+                trainer.train_step(buffer.sample_minibatch())
+
+    def test_train_iteration_runs_expected_updates_and_writes_checkpoints(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, _ = self._build_trainer(
+                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+            )
+
+            with mock.patch.object(
+                buffer, "compute_update_steps", wraps=buffer.compute_update_steps
+            ) as wrapped_steps:
+                report = trainer.train_iteration(
+                    replay_buffer=buffer, new_sample_count=257, iteration=7
+                )
+
+            latest_path = pathlib.Path(tmp_dir) / "latest.pt"
+            snapshots_dir = pathlib.Path(tmp_dir) / "snapshots"
+
+            self.assertIsInstance(report, TrainIterationReport)
+            wrapped_steps.assert_called_once_with(257)
+            self.assertEqual(report.iteration, 7)
+            self.assertEqual(report.starting_global_step, 0)
+            self.assertEqual(report.ending_global_step, report.num_updates)
+            self.assertEqual(report.num_updates, 193)
+            self.assertEqual(report.replay_sample_count, 1)
+            self.assertTrue(np.isfinite(report.mean_total_loss))
+            self.assertTrue(np.isfinite(report.mean_policy_loss))
+            self.assertTrue(np.isfinite(report.mean_wdl_loss))
+            self.assertEqual(report.latest_checkpoint_path, latest_path)
+            self.assertTrue(latest_path.exists())
+            self.assertEqual(report.snapshot_path.parent, snapshots_dir)
+            self.assertTrue(report.snapshot_path.exists())
+
+    def test_checkpoint_round_trip_restores_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            chunk_path = checkpoint_dir / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, model = self._build_trainer(
+                checkpoint_dir, policy_size=buffer.policy_size
+            )
+            trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
+            latest_path = checkpoint_dir / "latest.pt"
+            saved_params = {
+                name: param.detach().clone()
+                for name, param in model.named_parameters()
+            }
+
+            restored_model = self._ToyModel(buffer.policy_size)
+            restored_trainer = Trainer(
+                restored_model,
+                TrainerConfig(
+                    learning_rate=0.01,
+                    optimizer_momentum=0.9,
+                    optimizer_weight_decay=1e-4,
+                    value_loss_weight=1.25,
+                ),
+                device="cpu",
+                checkpoint_dir=checkpoint_dir,
+            )
+            restored_trainer.load_checkpoint(latest_path)
+
+        self.assertEqual(
+            restored_trainer.global_learner_step, trainer.global_learner_step
+        )
+        self.assertEqual(restored_trainer.last_checkpoint_iteration, 3)
+        self.assertTrue(restored_trainer.optimizer.state_dict()["state"])
+        for name, param in restored_model.named_parameters():
+            self.assertTrue(torch.equal(param.detach(), saved_params[name]))
+
+    def test_load_checkpoint_rejects_trainer_config_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            chunk_path = checkpoint_dir / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, _ = self._build_trainer(
+                checkpoint_dir, policy_size=buffer.policy_size
+            )
+            trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
+            latest_path = checkpoint_dir / "latest.pt"
+
+            restored_model = self._ToyModel(buffer.policy_size)
+            restored_trainer = Trainer(
+                restored_model,
+                TrainerConfig(
+                    learning_rate=0.01,
+                    optimizer_momentum=0.9,
+                    optimizer_weight_decay=1e-4,
+                    value_loss_weight=2.0,
+                ),
+                device="cpu",
+                checkpoint_dir=checkpoint_dir,
+            )
+
+            with self.assertRaisesRegex(ValueError, "trainer_config"):
+                restored_trainer.load_checkpoint(latest_path)
+
+        self.assertEqual(restored_trainer.global_learner_step, 0)
+        self.assertIsNone(restored_trainer.last_checkpoint_iteration)
+
+    def test_load_checkpoint_rejects_snapshot_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            chunk_path = checkpoint_dir / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, _ = self._build_trainer(
+                checkpoint_dir, policy_size=buffer.policy_size
+            )
+            report = trainer.train_iteration(buffer, new_sample_count=1, iteration=2)
+
+            restored_trainer, _ = self._build_trainer(
+                checkpoint_dir, policy_size=buffer.policy_size
+            )
+
+            with self.assertRaisesRegex(ValueError, "training checkpoint"):
+                restored_trainer.load_checkpoint(report.snapshot_path)
+
+        self.assertEqual(restored_trainer.global_learner_step, 0)
+        self.assertIsNone(restored_trainer.last_checkpoint_iteration)
+
+    def test_load_training_checkpoint_rejects_unsupported_format_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = pathlib.Path(tmp_dir) / "bad.pt"
+            torch.save({"format_version": 999}, path)
+
+            with self.assertRaisesRegex(ValueError, "unsupported checkpoint"):
+                load_training_checkpoint(path, map_location=torch.device("cpu"))
+
+    def test_snapshot_payload_excludes_optimizer_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, _ = self._build_trainer(
+                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+            )
+            report = trainer.train_iteration(buffer, new_sample_count=1, iteration=2)
+            payload = torch.load(report.snapshot_path, map_location="cpu")
+
+            self.assertIn("model_state_dict", payload)
+            self.assertIn("global_learner_step", payload)
+            self.assertIn("iteration", payload)
+            self.assertNotIn("optimizer_state_dict", payload)
+
+    def test_failed_checkpoint_save_keeps_latest_intact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            chunk_path = checkpoint_dir / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, _ = self._build_trainer(
+                checkpoint_dir, policy_size=buffer.policy_size
+            )
+            trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
+
+            latest_path = checkpoint_dir / "latest.pt"
+            previous_path = checkpoint_dir / "previous.pt"
+            expected_latest = latest_path.read_bytes()
+
+            with mock.patch(
+                "codfish.learner._checkpoint.torch.save",
+                side_effect=RuntimeError("disk full"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "disk full"):
+                    trainer.save_checkpoint(iteration=4)
+            self.assertEqual(latest_path.read_bytes(), expected_latest)
+            self.assertFalse(previous_path.exists())
+
+    def test_zero_update_iteration_still_writes_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            buffer = self._build_buffer([chunk_path])
+            trainer, _ = self._build_trainer(
+                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+            )
+
+            report = trainer.train_iteration(buffer, new_sample_count=0, iteration=9)
+
+            self.assertEqual(report.num_updates, 0)
+            self.assertEqual(report.starting_global_step, 0)
+            self.assertEqual(report.ending_global_step, 0)
+            self.assertEqual(report.mean_total_loss, 0.0)
+            self.assertEqual(report.mean_policy_loss, 0.0)
+            self.assertEqual(report.mean_wdl_loss, 0.0)
+            self.assertTrue(report.latest_checkpoint_path.exists())
+            self.assertTrue(report.snapshot_path.exists())
 
 
 class LearnerBindingsTest(unittest.TestCase):

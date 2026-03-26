@@ -9,6 +9,8 @@ from ._api import (
     read_raw_chunk_file,
 )
 from ._replay import ReplayBuffer, ReplayBufferConfig, ReplayBufferIngestReport
+from ._trainer import Trainer
+from ._types import TrainIterationReport, TrainStepMetrics, TrainerConfig
 
 __all__ = [
     "EncodedGameSamples",
@@ -20,6 +22,10 @@ __all__ = [
     "RawGame",
     "RawPly",
     "RawPolicyEntry",
+    "TrainIterationReport",
+    "TrainStepMetrics",
+    "Trainer",
+    "TrainerConfig",
     "encode_raw_game",
     "read_raw_chunk_file",
 ]
