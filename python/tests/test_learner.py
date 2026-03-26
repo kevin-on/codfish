@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import os
 import pathlib
 import struct
@@ -16,6 +15,9 @@ import torch
 from codfish.learner import (
     EncodedGameSamples,
     GameResult,
+    LearnerRunner,
+    LearnerRunnerConfig,
+    ModelSpec,
     ReplayBuffer,
     ReplayBufferConfig,
     RawChunkFile,
@@ -26,10 +28,14 @@ from codfish.learner import (
     TrainStepMetrics,
     Trainer,
     TrainerConfig,
+    WandbConfig,
     encode_raw_game,
     read_raw_chunk_file,
 )
-from codfish.learner._checkpoint import load_training_checkpoint
+from codfish.learner._checkpoint import (
+    load_snapshot_checkpoint,
+    load_training_checkpoint,
+)
 
 
 CHUNK_MAGIC = b"CFRG"
@@ -123,6 +129,44 @@ def _write_chunk_file(path: pathlib.Path, raw_games: list[RawGame]) -> None:
 
 def _input_sha256(samples: EncodedGameSamples) -> str:
     return hashlib.sha256(samples.inputs.tobytes()).hexdigest()
+
+
+def _policy_size() -> int:
+    return encode_raw_game(_canonical_raw_game()).policy_size
+
+
+class _FakeWandbRun:
+    def __init__(self) -> None:
+        self.define_metric_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self.log_calls: list[dict[str, object]] = []
+        self.finish_calls = 0
+        self.log_artifact_calls = 0
+
+    def define_metric(self, *args: object, **kwargs: object) -> None:
+        self.define_metric_calls.append((args, dict(kwargs)))
+
+    def log(self, payload: dict[str, object]) -> None:
+        self.log_calls.append(dict(payload))
+
+    def finish(self) -> None:
+        self.finish_calls += 1
+
+    def log_artifact(self, *args: object, **kwargs: object) -> None:
+        self.log_artifact_calls += 1
+
+
+class _FakeWandbModule:
+    def __init__(self) -> None:
+        self.init_calls: list[dict[str, object]] = []
+        self.run = _FakeWandbRun()
+        self.artifact_calls = 0
+
+    def init(self, **kwargs: object) -> _FakeWandbRun:
+        self.init_calls.append(dict(kwargs))
+        return self.run
+
+    def Artifact(self, *args: object, **kwargs: object) -> None:
+        self.artifact_calls += 1
 
 
 class TrainerTest(unittest.TestCase):
@@ -322,15 +366,14 @@ class TrainerTest(unittest.TestCase):
             restored_trainer = Trainer(
                 restored_model,
                 TrainerConfig(
-                    learning_rate=0.01,
-                    optimizer_momentum=0.9,
-                    optimizer_weight_decay=1e-4,
+                    learning_rate=0.02,
+                    optimizer_momentum=0.4,
+                    optimizer_weight_decay=2e-4,
                     value_loss_weight=2.0,
                 ),
                 device="cpu",
                 checkpoint_dir=checkpoint_dir,
             )
-
             with self.assertRaisesRegex(ValueError, "trainer_config"):
                 restored_trainer.load_checkpoint(latest_path)
 
@@ -427,6 +470,329 @@ class TrainerTest(unittest.TestCase):
             self.assertTrue(report.snapshot_path.exists())
 
 
+class LearnerRunnerTest(unittest.TestCase):
+    class _ToyModel(torch.nn.Module):
+        def __init__(self, policy_size: int) -> None:
+            super().__init__()
+            self.policy_head = torch.nn.Linear(118 * 8 * 8, policy_size)
+            self.wdl_head = torch.nn.Linear(118 * 8 * 8, 3)
+
+        def forward(
+            self, inputs: torch.Tensor
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            flat = inputs.reshape(inputs.shape[0], -1)
+            return self.policy_head(flat), self.wdl_head(flat)
+
+    def _trainer_config(self) -> TrainerConfig:
+        return TrainerConfig(
+            learning_rate=0.01,
+            optimizer_momentum=0.9,
+            optimizer_weight_decay=1e-4,
+            value_loss_weight=1.25,
+        )
+
+    def _replay_config(self) -> ReplayBufferConfig:
+        return ReplayBufferConfig(
+            sample_capacity=8,
+            batch_size=2,
+            replay_ratio=1.5,
+            seed=7,
+        )
+
+    def _model_spec(self) -> ModelSpec:
+        policy_size = _policy_size()
+        return ModelSpec(
+            name="toy-model",
+            config={"channels": 118, "policy_size": policy_size},
+            factory=lambda: self._ToyModel(policy_size),
+        )
+
+    def _runner_config(
+        self,
+        checkpoint_dir: pathlib.Path,
+        *,
+        resume: bool = False,
+        wandb: WandbConfig | None = None,
+    ) -> LearnerRunnerConfig:
+        return LearnerRunnerConfig(
+            device="cpu",
+            checkpoint_dir=checkpoint_dir,
+            resume=resume,
+            wandb=wandb,
+        )
+
+    def test_runner_init_builds_model_trainer_and_replay_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(pathlib.Path(tmp_dir)),
+            )
+
+        self.assertIsInstance(runner.model, self._ToyModel)
+        self.assertIsInstance(runner.trainer, Trainer)
+        self.assertIsInstance(runner.replay_buffer, ReplayBuffer)
+        self.assertEqual(runner.trainer.model_name, "toy-model")
+        self.assertEqual(
+            runner.trainer.model_config,
+            {"channels": 118, "policy_size": _policy_size()},
+        )
+
+    def test_resume_with_existing_latest_restores_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            chunk_path = checkpoint_dir / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            first_runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(checkpoint_dir),
+            )
+            first_report = first_runner.run_iteration([chunk_path], iteration=4)
+            first_runner.close()
+
+            resumed_runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(checkpoint_dir, resume=True),
+            )
+
+        self.assertEqual(
+            resumed_runner.trainer.global_learner_step,
+            first_report.ending_global_step,
+        )
+        self.assertEqual(resumed_runner.trainer.last_checkpoint_iteration, 4)
+        self.assertEqual(resumed_runner.trainer.model_name, "toy-model")
+        self.assertEqual(
+            resumed_runner.trainer.model_config,
+            {"channels": 118, "policy_size": _policy_size()},
+        )
+        self.assertTrue(resumed_runner.trainer.optimizer.state_dict()["state"])
+
+    def test_resume_with_missing_latest_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with self.assertRaises(FileNotFoundError):
+                LearnerRunner(
+                    self._model_spec(),
+                    self._trainer_config(),
+                    self._replay_config(),
+                    self._runner_config(pathlib.Path(tmp_dir), resume=True),
+                )
+
+    def test_run_iteration_returns_train_iteration_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(pathlib.Path(tmp_dir)),
+            )
+
+            with mock.patch.object(
+                runner.trainer,
+                "train_iteration",
+                wraps=runner.trainer.train_iteration,
+            ) as wrapped_train_iteration:
+                report = runner.run_iteration([chunk_path], iteration=6)
+
+        self.assertIsInstance(report, TrainIterationReport)
+        wrapped_train_iteration.assert_called_once()
+        replay_buffer_arg, new_sample_count_arg, iteration_arg = (
+            wrapped_train_iteration.call_args.args
+        )
+        self.assertIs(replay_buffer_arg, runner.replay_buffer)
+        self.assertEqual(new_sample_count_arg, report.new_sample_count)
+        self.assertEqual(iteration_arg, 6)
+        self.assertEqual(report.new_sample_count, 1)
+
+    def test_run_iteration_is_atomic_when_any_chunk_is_malformed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            first_chunk = checkpoint_dir / "first.bin"
+            second_chunk = checkpoint_dir / "second.bin"
+            bad_chunk = checkpoint_dir / "bad.bin"
+            _write_chunk_file(first_chunk, [_canonical_raw_game()])
+            _write_chunk_file(second_chunk, [_alternate_raw_game()])
+            bad_chunk.write_bytes(b"CFRG\x01\x00")
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(checkpoint_dir),
+            )
+            first_report = runner.run_iteration([first_chunk], iteration=1)
+
+            with self.assertRaisesRegex(RuntimeError, os.fspath(bad_chunk)):
+                runner.run_iteration([second_chunk, bad_chunk], iteration=2)
+
+        self.assertEqual(runner.replay_buffer.sample_count, 1)
+        self.assertEqual(
+            runner.trainer.global_learner_step, first_report.ending_global_step
+        )
+
+    def test_checkpoints_include_model_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_dir = pathlib.Path(tmp_dir)
+            chunk_path = checkpoint_dir / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(checkpoint_dir),
+            )
+            report = runner.run_iteration([chunk_path], iteration=8)
+
+            training_checkpoint = load_training_checkpoint(
+                report.latest_checkpoint_path,
+                map_location=torch.device("cpu"),
+            )
+            snapshot_checkpoint = load_snapshot_checkpoint(
+                report.snapshot_path,
+                map_location=torch.device("cpu"),
+            )
+
+        expected_config = {"channels": 118, "policy_size": _policy_size()}
+        self.assertEqual(training_checkpoint.model_name, "toy-model")
+        self.assertEqual(training_checkpoint.model_config, expected_config)
+        self.assertEqual(snapshot_checkpoint.model_name, "toy-model")
+        self.assertEqual(snapshot_checkpoint.model_config, expected_config)
+
+    def test_wandb_disabled_path_does_not_import_wandb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            with mock.patch(
+                "codfish.learner._wandb.importlib.import_module",
+                side_effect=AssertionError("wandb should not be imported"),
+            ):
+                runner = LearnerRunner(
+                    self._model_spec(),
+                    self._trainer_config(),
+                    self._replay_config(),
+                    self._runner_config(pathlib.Path(tmp_dir)),
+                )
+                runner.run_iteration([chunk_path], iteration=3)
+
+    def test_wandb_enabled_logs_metrics_and_finishes_run(self) -> None:
+        fake_wandb = _FakeWandbModule()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
+            _write_chunk_file(chunk_path, [_canonical_raw_game()])
+            with mock.patch(
+                "codfish.learner._wandb.importlib.import_module",
+                return_value=fake_wandb,
+            ):
+                runner = LearnerRunner(
+                    self._model_spec(),
+                    self._trainer_config(),
+                    self._replay_config(),
+                    self._runner_config(
+                        pathlib.Path(tmp_dir),
+                        wandb=WandbConfig(
+                            project="codfish-test",
+                            entity="codfish",
+                            name="runner",
+                        ),
+                    ),
+                )
+                report = runner.run_iteration([chunk_path], iteration=11)
+                runner.close()
+
+        self.assertEqual(len(fake_wandb.init_calls), 1)
+        init_kwargs = fake_wandb.init_calls[0]
+        self.assertEqual(init_kwargs["project"], "codfish-test")
+        self.assertEqual(init_kwargs["entity"], "codfish")
+        self.assertEqual(init_kwargs["name"], "runner")
+        self.assertEqual(
+            init_kwargs["config"],
+            {
+                "model": {
+                    "name": "toy-model",
+                    "config": {"channels": 118, "policy_size": _policy_size()},
+                },
+                "trainer": {
+                    "learning_rate": 0.01,
+                    "optimizer_momentum": 0.9,
+                    "optimizer_weight_decay": 1e-4,
+                    "value_loss_weight": 1.25,
+                },
+                "replay": {
+                    "sample_capacity": 8,
+                    "batch_size": 2,
+                    "replay_ratio": 1.5,
+                    "seed": 7,
+                },
+                "runner": {"resume": False},
+            },
+        )
+        self.assertEqual(
+            fake_wandb.run.define_metric_calls,
+            [
+                (("global_step",), {}),
+                (("iteration",), {}),
+                (("train/*",), {"step_metric": "global_step"}),
+            ],
+        )
+        self.assertEqual(len(fake_wandb.run.log_calls), 1)
+        self.assertEqual(
+            fake_wandb.run.log_calls[0],
+            {
+                "global_step": report.ending_global_step,
+                "iteration": 11,
+                "train/total_loss": report.mean_total_loss,
+                "train/policy_loss": report.mean_policy_loss,
+                "train/wdl_loss": report.mean_wdl_loss,
+                "train/num_updates": report.num_updates,
+            },
+        )
+        self.assertEqual(fake_wandb.run.finish_calls, 1)
+        self.assertEqual(fake_wandb.run.log_artifact_calls, 0)
+        self.assertEqual(fake_wandb.artifact_calls, 0)
+
+    def test_wandb_requested_without_dependency_raises_runtime_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch(
+                "codfish.learner._wandb.importlib.import_module",
+                side_effect=ModuleNotFoundError("No module named 'wandb'"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "wandb is not installed"):
+                    LearnerRunner(
+                        self._model_spec(),
+                        self._trainer_config(),
+                        self._replay_config(),
+                        self._runner_config(
+                            pathlib.Path(tmp_dir),
+                            wandb=WandbConfig(project="codfish-test"),
+                        ),
+                    )
+
+    def test_runner_context_manager_calls_finish(self) -> None:
+        fake_wandb = _FakeWandbModule()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch(
+                "codfish.learner._wandb.importlib.import_module",
+                return_value=fake_wandb,
+            ):
+                with LearnerRunner(
+                    self._model_spec(),
+                    self._trainer_config(),
+                    self._replay_config(),
+                    self._runner_config(
+                        pathlib.Path(tmp_dir),
+                        wandb=WandbConfig(project="codfish-test"),
+                    ),
+                ):
+                    pass
+
+        self.assertEqual(fake_wandb.run.finish_calls, 1)
+
+
 class LearnerBindingsTest(unittest.TestCase):
     def test_read_raw_chunk_file_matches_cxx_golden_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -483,7 +849,9 @@ class LearnerBindingsTest(unittest.TestCase):
 
 
 class ReplayBufferTest(unittest.TestCase):
-    def test_ingest_chunk_files_reports_counts_and_matches_encoded_sample(self) -> None:
+    def test_ingest_chunk_files_returns_new_sample_count_and_matches_encoded_sample(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             chunk_path = pathlib.Path(tmp_dir) / "canonical.bin"
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
@@ -493,16 +861,9 @@ class ReplayBufferTest(unittest.TestCase):
                     sample_capacity=8, batch_size=2, replay_ratio=1.5, seed=7
                 )
             )
-            report = buffer.ingest_chunk_files([chunk_path])
+            new_sample_count = buffer.ingest_chunk_files([chunk_path])
 
-        self.assertEqual(report.requested_chunk_count, 1)
-        self.assertEqual(report.loaded_chunk_count, 1)
-        self.assertEqual(report.skipped_chunk_count, 0)
-        self.assertEqual(report.skipped_chunk_errors, [])
-        self.assertEqual(report.new_game_count, 1)
-        self.assertEqual(report.new_sample_count, 1)
-        self.assertEqual(report.trimmed_sample_count, 0)
-        self.assertEqual(report.total_sample_count, 1)
+        self.assertEqual(new_sample_count, 1)
         self.assertEqual(buffer.sample_count, 1)
 
         expected = encode_raw_game(_canonical_raw_game())
@@ -525,12 +886,11 @@ class ReplayBufferTest(unittest.TestCase):
             buffer = ReplayBuffer(
                 ReplayBufferConfig(sample_capacity=1, batch_size=1, replay_ratio=1.0)
             )
-            first_report = buffer.ingest_chunk_files([first_chunk])
-            second_report = buffer.ingest_chunk_files([second_chunk])
+            first_new_sample_count = buffer.ingest_chunk_files([first_chunk])
+            second_new_sample_count = buffer.ingest_chunk_files([second_chunk])
 
-        self.assertEqual(first_report.total_sample_count, 1)
-        self.assertEqual(second_report.trimmed_sample_count, 1)
-        self.assertEqual(second_report.total_sample_count, 1)
+        self.assertEqual(first_new_sample_count, 1)
+        self.assertEqual(second_new_sample_count, 1)
         self.assertEqual(buffer.sample_count, 1)
 
         batch = buffer.sample_minibatch()
@@ -539,27 +899,28 @@ class ReplayBufferTest(unittest.TestCase):
         np.testing.assert_array_equal(batch.policy_targets, expected.policy_targets)
         np.testing.assert_array_equal(batch.wdl_targets, expected.wdl_targets)
 
-    def test_ingest_chunk_files_skips_malformed_chunk_and_reports_warning(self) -> None:
+    def test_ingest_chunk_files_is_atomic_when_any_chunk_is_malformed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
+            first_chunk = pathlib.Path(tmp_dir) / "first.bin"
+            second_chunk = pathlib.Path(tmp_dir) / "second.bin"
             bad_chunk = pathlib.Path(tmp_dir) / "bad.bin"
+            _write_chunk_file(first_chunk, [_canonical_raw_game()])
+            _write_chunk_file(second_chunk, [_alternate_raw_game()])
             bad_chunk.write_bytes(b"CFRG\x01\x00")
 
             buffer = ReplayBuffer(
                 ReplayBufferConfig(sample_capacity=4, batch_size=1, replay_ratio=1.0)
             )
-            with self.assertLogs("codfish.learner._replay", level="WARNING") as logs:
-                report = buffer.ingest_chunk_files([bad_chunk])
+            buffer.ingest_chunk_files([first_chunk])
+            with self.assertRaisesRegex(RuntimeError, os.fspath(bad_chunk)):
+                buffer.ingest_chunk_files([second_chunk, bad_chunk])
 
-        self.assertEqual(report.requested_chunk_count, 1)
-        self.assertEqual(report.loaded_chunk_count, 0)
-        self.assertEqual(report.skipped_chunk_count, 1)
-        self.assertEqual(report.new_game_count, 0)
-        self.assertEqual(report.new_sample_count, 0)
-        self.assertEqual(report.total_sample_count, 0)
-        self.assertEqual(len(report.skipped_chunk_errors), 1)
-        self.assertIn(os.fspath(bad_chunk), report.skipped_chunk_errors[0])
-        self.assertEqual(len(logs.records), 1)
-        self.assertEqual(logs.records[0].levelno, logging.WARNING)
+        self.assertEqual(buffer.sample_count, 1)
+        batch = buffer.sample_minibatch()
+        expected = encode_raw_game(_canonical_raw_game())
+        np.testing.assert_array_equal(batch.inputs, expected.inputs)
+        np.testing.assert_array_equal(batch.policy_targets, expected.policy_targets)
+        np.testing.assert_array_equal(batch.wdl_targets, expected.wdl_targets)
 
     def test_sample_minibatch_raises_when_buffer_is_empty(self) -> None:
         buffer = ReplayBuffer(

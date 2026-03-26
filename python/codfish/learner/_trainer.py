@@ -30,6 +30,8 @@ class Trainer:
         self.device = torch.device(device)
         self.checkpoint_dir = Path(checkpoint_dir)
         self.model.to(self.device)
+        self.model_name = type(model).__name__
+        self.model_config: dict[str, object] = {}
         self.optimizer = torch.optim.SGD(
             self.model.parameters(),
             lr=config.learning_rate,
@@ -38,6 +40,12 @@ class Trainer:
         )
         self.global_learner_step = 0
         self.last_checkpoint_iteration: int | None = None
+
+    def set_model_metadata(
+        self, *, model_name: str, model_config: dict[str, object]
+    ) -> None:
+        self.model_name = model_name
+        self.model_config = dict(model_config)
 
     def train_step(self, batch: EncodedGameSamples) -> TrainStepMetrics:
         inputs = torch.from_numpy(batch.inputs).to(
@@ -134,6 +142,8 @@ class Trainer:
             optimizer_state_dict=self.optimizer.state_dict(),
             global_learner_step=self.global_learner_step,
             iteration=iteration,
+            model_name=self.model_name,
+            model_config=self.model_config,
             trainer_config=self.config,
         )
         atomic_torch_save(payload, latest_path, previous_path=previous_path)
@@ -150,6 +160,8 @@ class Trainer:
             model_state_dict=self.model.state_dict(),
             global_learner_step=self.global_learner_step,
             iteration=iteration,
+            model_name=self.model_name,
+            model_config=self.model_config,
         )
         atomic_torch_save(payload, snapshot_path)
         return snapshot_path
@@ -164,4 +176,6 @@ class Trainer:
         self.optimizer.load_state_dict(checkpoint.optimizer_state_dict)
         self.global_learner_step = checkpoint.global_learner_step
         self.last_checkpoint_iteration = checkpoint.iteration
+        self.model_name = checkpoint.model_name
+        self.model_config = checkpoint.model_config
         self.model.to(self.device)

@@ -92,8 +92,10 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_checkpoint.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_replay.py"
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_runner.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_trainer.py"
-        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_types.py")
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_types.py"
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_wandb.py")
     set(CODFISH_PYTHON_STAMP
         "${CODFISH_PYTHON_PACKAGE_DIR}/.codfish_python_staged")
 
@@ -117,11 +119,17 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/_replay.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/_replay.py"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/learner/_runner.py"
+                "${CODFISH_PYTHON_LEARNER_DIR}/_runner.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/_trainer.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/_trainer.py"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/_types.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/_types.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/learner/_wandb.py"
+                "${CODFISH_PYTHON_LEARNER_DIR}/_wandb.py"
         COMMAND ${CMAKE_COMMAND} -E touch "${CODFISH_PYTHON_STAMP}"
         DEPENDS ${CODFISH_PYTHON_SOURCES}
         VERBATIM)

@@ -21,6 +21,8 @@ class TrainingCheckpoint:
     optimizer_state_dict: dict[str, object]
     global_learner_step: int
     iteration: int
+    model_name: str
+    model_config: dict[str, object]
     trainer_config: TrainerConfig
 
 
@@ -30,6 +32,8 @@ class SnapshotCheckpoint:
     model_state_dict: dict[str, object]
     global_learner_step: int
     iteration: int
+    model_name: str
+    model_config: dict[str, object]
 
 
 def build_training_checkpoint_payload(
@@ -38,6 +42,8 @@ def build_training_checkpoint_payload(
     optimizer_state_dict: dict[str, object],
     global_learner_step: int,
     iteration: int,
+    model_name: str,
+    model_config: dict[str, object],
     trainer_config: TrainerConfig,
 ) -> dict[str, object]:
     return {
@@ -46,6 +52,8 @@ def build_training_checkpoint_payload(
         "optimizer_state_dict": optimizer_state_dict,
         "global_learner_step": global_learner_step,
         "iteration": iteration,
+        "model_name": model_name,
+        "model_config": model_config,
         "trainer_config": _trainer_config_payload(trainer_config),
     }
 
@@ -55,12 +63,16 @@ def build_snapshot_payload(
     model_state_dict: dict[str, object],
     global_learner_step: int,
     iteration: int,
+    model_name: str,
+    model_config: dict[str, object],
 ) -> dict[str, object]:
     return {
         "format_version": CHECKPOINT_FORMAT_VERSION,
         "model_state_dict": model_state_dict,
         "global_learner_step": global_learner_step,
         "iteration": iteration,
+        "model_name": model_name,
+        "model_config": model_config,
     }
 
 
@@ -109,6 +121,8 @@ def _parse_training_checkpoint(payload: dict[str, object]) -> TrainingCheckpoint
             payload, "global_learner_step", "training checkpoint"
         ),
         iteration=_require_int(payload, "iteration", "training checkpoint"),
+        model_name=_require_str(payload, "model_name", "training checkpoint"),
+        model_config=_require_dict(payload, "model_config", "training checkpoint"),
         trainer_config=_parse_trainer_config(
             _require_dict(payload, "trainer_config", "training checkpoint")
         ),
@@ -121,6 +135,8 @@ def _parse_snapshot_checkpoint(payload: dict[str, object]) -> SnapshotCheckpoint
         model_state_dict=_require_dict(payload, "model_state_dict", "snapshot"),
         global_learner_step=_require_int(payload, "global_learner_step", "snapshot"),
         iteration=_require_int(payload, "iteration", "snapshot"),
+        model_name=_require_str(payload, "model_name", "snapshot"),
+        model_config=_require_dict(payload, "model_config", "snapshot"),
     )
 
 
@@ -159,6 +175,13 @@ def _require_int(payload: dict[str, object], key: str, context: str) -> int:
     value = _require_key(payload, key, context)
     if not isinstance(value, int):
         raise ValueError(f"{context} field {key} must be an int")
+    return value
+
+
+def _require_str(payload: dict[str, object], key: str, context: str) -> str:
+    value = _require_key(payload, key, context)
+    if not isinstance(value, str):
+        raise ValueError(f"{context} field {key} must be a str")
     return value
 
 
