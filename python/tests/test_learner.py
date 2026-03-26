@@ -420,6 +420,7 @@ class TrainerTest(unittest.TestCase):
             restored_trainer.global_learner_step, trainer.global_learner_step
         )
         self.assertEqual(restored_trainer.last_checkpoint_iteration, 3)
+        self.assertIsNotNone(restored_trainer.replay_sampler_rng_state)
         self.assertTrue(restored_trainer.optimizer.state_dict()["state"])
         for name, param in restored_model.named_parameters():
             self.assertTrue(torch.equal(param.detach(), saved_params[name]))
@@ -528,6 +529,7 @@ class TrainerTest(unittest.TestCase):
 
         self.assertEqual(checkpoint.model_name, "legacy-model")
         self.assertEqual(checkpoint.model_config, {"kind": "legacy"})
+        self.assertIsNone(checkpoint.replay_sampler_rng_state)
 
     def test_load_snapshot_checkpoint_accepts_legacy_flat_model_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -652,7 +654,7 @@ class LearnerRunnerTest(unittest.TestCase):
             wandb=wandb,
         )
 
-    def test_runner_init_builds_model_trainer_and_replay_buffer(self) -> None:
+    def test_runner_init_builds_model_and_trainer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             runner = LearnerRunner(
                 self._model_spec(),
@@ -663,7 +665,6 @@ class LearnerRunnerTest(unittest.TestCase):
 
         self.assertIsInstance(runner.model, self._ToyModel)
         self.assertIsInstance(runner.trainer, Trainer)
-        self.assertIsInstance(runner.replay_buffer, ReplayBuffer)
         self.assertEqual(runner.trainer.model_name, "toy-model")
         self.assertEqual(
             runner.trainer.model_config,
@@ -673,6 +674,7 @@ class LearnerRunnerTest(unittest.TestCase):
                 "policy_size": _policy_size(),
             },
         )
+        self.assertFalse(hasattr(runner, "replay_buffer"))
 
     def test_resume_with_existing_latest_restores_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -685,7 +687,7 @@ class LearnerRunnerTest(unittest.TestCase):
                 self._replay_config(),
                 self._runner_config(checkpoint_dir),
             )
-            first_report = first_runner.run_iteration([chunk_path], iteration=4)
+            first_report = first_runner.run_iteration([], [chunk_path], iteration=4)
             first_runner.close()
 
             resumed_runner = LearnerRunner(
@@ -710,6 +712,10 @@ class LearnerRunnerTest(unittest.TestCase):
             },
         )
         self.assertTrue(resumed_runner.trainer.optimizer.state_dict()["state"])
+        self.assertEqual(
+            resumed_runner._replay_rng.bit_generator.state,
+            first_runner._replay_rng.bit_generator.state,
+        )
 
     def test_runner_rejects_model_config_shape_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -751,17 +757,138 @@ class LearnerRunnerTest(unittest.TestCase):
                 "train_iteration",
                 wraps=runner.trainer.train_iteration,
             ) as wrapped_train_iteration:
-                report = runner.run_iteration([chunk_path], iteration=6)
+                report = runner.run_iteration([], [chunk_path], iteration=6)
 
         self.assertIsInstance(report, TrainIterationReport)
         wrapped_train_iteration.assert_called_once()
         replay_buffer_arg, new_sample_count_arg, iteration_arg = (
             wrapped_train_iteration.call_args.args
         )
-        self.assertIs(replay_buffer_arg, runner.replay_buffer)
+        self.assertIsInstance(replay_buffer_arg, ReplayBuffer)
         self.assertEqual(new_sample_count_arg, report.new_sample_count)
         self.assertEqual(iteration_arg, 6)
         self.assertEqual(report.new_sample_count, 1)
+        self.assertEqual(replay_buffer_arg.sample_count, 1)
+
+    def test_run_iteration_rebuilds_replay_from_scratch_each_call(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            first_chunk = pathlib.Path(tmp_dir) / "first.bin"
+            second_chunk = pathlib.Path(tmp_dir) / "second.bin"
+            _write_chunk_file(first_chunk, [_canonical_raw_game()])
+            _write_chunk_file(second_chunk, [_alternate_raw_game()])
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(pathlib.Path(tmp_dir)),
+            )
+            observed_sample_counts: list[int] = []
+            original_train_iteration = runner.trainer.train_iteration
+
+            def wrapped_train_iteration(
+                replay_buffer: ReplayBuffer,
+                new_sample_count: int,
+                iteration: int,
+            ) -> TrainIterationReport:
+                observed_sample_counts.append(replay_buffer.sample_count)
+                return original_train_iteration(replay_buffer, new_sample_count, iteration)
+
+            with mock.patch.object(
+                runner.trainer,
+                "train_iteration",
+                side_effect=wrapped_train_iteration,
+            ):
+                runner.run_iteration([], [first_chunk], iteration=1)
+                runner.run_iteration([], [second_chunk], iteration=2)
+
+        self.assertEqual(observed_sample_counts, [1, 1])
+
+    def test_run_iteration_preserves_replay_sampler_state_across_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            first_chunk = pathlib.Path(tmp_dir) / "first.bin"
+            second_chunk = pathlib.Path(tmp_dir) / "second.bin"
+            _write_chunk_file(
+                first_chunk,
+                [_canonical_raw_game(), _alternate_raw_game()],
+            )
+            _write_chunk_file(
+                second_chunk,
+                [_canonical_raw_game(), _alternate_raw_game()],
+            )
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                self._replay_config(),
+                self._runner_config(pathlib.Path(tmp_dir)),
+            )
+            observed_rng_states: list[dict[str, object]] = []
+            original_train_iteration = runner.trainer.train_iteration
+
+            def wrapped_train_iteration(
+                replay_buffer: ReplayBuffer,
+                new_sample_count: int,
+                iteration: int,
+            ) -> TrainIterationReport:
+                observed_rng_states.append(dict(replay_buffer._rng.bit_generator.state))
+                return original_train_iteration(replay_buffer, new_sample_count, iteration)
+
+            with mock.patch.object(
+                runner.trainer,
+                "train_iteration",
+                side_effect=wrapped_train_iteration,
+            ):
+                runner.run_iteration([], [first_chunk], iteration=1)
+                runner.run_iteration([], [second_chunk], iteration=2)
+
+        self.assertEqual(len(observed_rng_states), 2)
+        self.assertNotEqual(observed_rng_states[0], observed_rng_states[1])
+
+    def test_run_iteration_selects_recent_history_tail_before_new_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            first_chunk = pathlib.Path(tmp_dir) / "first.bin"
+            second_chunk = pathlib.Path(tmp_dir) / "second.bin"
+            third_chunk = pathlib.Path(tmp_dir) / "third.bin"
+            new_chunk = pathlib.Path(tmp_dir) / "new.bin"
+            _write_chunk_file(first_chunk, [_canonical_raw_game()])
+            _write_chunk_file(
+                second_chunk,
+                [_canonical_raw_game(), _alternate_raw_game()],
+            )
+            _write_chunk_file(third_chunk, [_alternate_raw_game()])
+            _write_chunk_file(new_chunk, [_canonical_raw_game()])
+            runner = LearnerRunner(
+                self._model_spec(),
+                self._trainer_config(),
+                ReplayBufferConfig(
+                    sample_capacity=3,
+                    batch_size=2,
+                    replay_ratio=1.5,
+                    seed=7,
+                ),
+                self._runner_config(pathlib.Path(tmp_dir)),
+            )
+            ingest_calls: list[list[pathlib.Path]] = []
+            original_ingest = ReplayBuffer.ingest_chunk_files
+
+            def wrapped_ingest(
+                replay_buffer: ReplayBuffer,
+                chunk_paths: list[str | os.PathLike[str]],
+            ) -> int:
+                ingest_calls.append([pathlib.Path(path) for path in chunk_paths])
+                return original_ingest(replay_buffer, chunk_paths)
+
+            with mock.patch.object(
+                ReplayBuffer,
+                "ingest_chunk_files",
+                new=wrapped_ingest,
+            ):
+                runner.run_iteration(
+                    [first_chunk, second_chunk, third_chunk],
+                    [new_chunk],
+                    iteration=3,
+                )
+
+        self.assertEqual(ingest_calls, [[second_chunk, third_chunk], [new_chunk]])
 
     def test_run_iteration_is_atomic_when_any_chunk_is_malformed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -778,12 +905,11 @@ class LearnerRunnerTest(unittest.TestCase):
                 self._replay_config(),
                 self._runner_config(checkpoint_dir),
             )
-            first_report = runner.run_iteration([first_chunk], iteration=1)
+            first_report = runner.run_iteration([], [first_chunk], iteration=1)
 
             with self.assertRaisesRegex(RuntimeError, os.fspath(bad_chunk)):
-                runner.run_iteration([second_chunk, bad_chunk], iteration=2)
+                runner.run_iteration([first_chunk], [second_chunk, bad_chunk], iteration=2)
 
-        self.assertEqual(runner.replay_buffer.sample_count, 1)
         self.assertEqual(
             runner.trainer.global_learner_step, first_report.ending_global_step
         )
@@ -799,7 +925,7 @@ class LearnerRunnerTest(unittest.TestCase):
                 self._replay_config(),
                 self._runner_config(checkpoint_dir),
             )
-            report = runner.run_iteration([chunk_path], iteration=8)
+            report = runner.run_iteration([], [chunk_path], iteration=8)
 
             training_checkpoint = load_training_checkpoint(
                 report.latest_checkpoint_path,
@@ -819,6 +945,7 @@ class LearnerRunnerTest(unittest.TestCase):
                 "policy_size": _policy_size(),
             },
         )
+        self.assertIsNotNone(training_checkpoint.replay_sampler_rng_state)
         self.assertEqual(snapshot_checkpoint.model_name, "toy-model")
         self.assertEqual(
             snapshot_checkpoint.model_config,
@@ -843,7 +970,7 @@ class LearnerRunnerTest(unittest.TestCase):
                     self._replay_config(),
                     self._runner_config(pathlib.Path(tmp_dir)),
                 )
-                runner.run_iteration([chunk_path], iteration=3)
+                runner.run_iteration([], [chunk_path], iteration=3)
 
     def test_wandb_enabled_logs_metrics_and_finishes_run(self) -> None:
         fake_wandb = _FakeWandbModule()
@@ -867,7 +994,7 @@ class LearnerRunnerTest(unittest.TestCase):
                         ),
                     ),
                 )
-                report = runner.run_iteration([chunk_path], iteration=11)
+                report = runner.run_iteration([], [chunk_path], iteration=11)
                 runner.close()
 
         self.assertEqual(len(fake_wandb.init_calls), 1)

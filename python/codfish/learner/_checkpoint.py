@@ -24,6 +24,7 @@ class TrainingCheckpoint:
     model_name: str
     model_config: dict[str, object]
     trainer_config: TrainerConfig
+    replay_sampler_rng_state: dict[str, object] | None
 
 
 @dataclass(slots=True)
@@ -45,6 +46,7 @@ def build_training_checkpoint_payload(
     model_name: str,
     model_config: dict[str, object],
     trainer_config: TrainerConfig,
+    replay_sampler_rng_state: dict[str, object] | None,
 ) -> dict[str, object]:
     return {
         "format_version": CHECKPOINT_FORMAT_VERSION,
@@ -55,6 +57,11 @@ def build_training_checkpoint_payload(
         "model_name": model_name,
         "model_config": dict(model_config),
         "trainer_config": _trainer_config_payload(trainer_config),
+        "replay_sampler_rng_state": (
+            dict(replay_sampler_rng_state)
+            if replay_sampler_rng_state is not None
+            else None
+        ),
     }
 
 
@@ -126,6 +133,11 @@ def _parse_training_checkpoint(payload: dict[str, object]) -> TrainingCheckpoint
         trainer_config=_parse_trainer_config(
             _require_dict(payload, "trainer_config", "training checkpoint")
         ),
+        replay_sampler_rng_state=_optional_require_dict(
+            payload,
+            "replay_sampler_rng_state",
+            "training checkpoint",
+        ),
     )
 
 
@@ -168,6 +180,17 @@ def _require_dict(
     value = _require_key(payload, key, context)
     if not isinstance(value, dict):
         raise ValueError(f"{context} field {key} must be a dict")
+    return value
+
+
+def _optional_require_dict(
+    payload: dict[str, object], key: str, context: str
+) -> dict[str, object] | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{context} field {key} must be a dict or None")
     return value
 
 

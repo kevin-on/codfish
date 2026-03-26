@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import math
 import os
@@ -33,9 +34,14 @@ class ReplayBufferConfig:
 
 
 class ReplayBuffer:
-    def __init__(self, config: ReplayBufferConfig) -> None:
+    def __init__(
+        self,
+        config: ReplayBufferConfig,
+        *,
+        rng: np.random.Generator | None = None,
+    ) -> None:
         self._config = config
-        self._rng = np.random.default_rng(config.seed)
+        self._rng = rng if rng is not None else np.random.default_rng(config.seed)
 
         empty = encode_raw_game(
             RawGame(initial_fen=None, game_result=GameResult.DRAW, plies=[])
@@ -57,6 +63,10 @@ class ReplayBuffer:
     @property
     def policy_size(self) -> int:
         return self._policy_size
+
+    @property
+    def rng_state(self) -> dict[str, object]:
+        return copy.deepcopy(self._rng.bit_generator.state)
 
     def ingest_chunk_files(
         self, chunk_paths: Sequence[str | os.PathLike[str]]

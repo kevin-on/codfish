@@ -40,6 +40,7 @@ class Trainer:
         )
         self.global_learner_step = 0
         self.last_checkpoint_iteration: int | None = None
+        self.replay_sampler_rng_state: dict[str, object] | None = None
 
     def set_model_metadata(
         self,
@@ -111,7 +112,10 @@ class Trainer:
             policy_losses.append(metrics.policy_loss)
             wdl_losses.append(metrics.wdl_loss)
 
-        latest_checkpoint_path = self.save_checkpoint(iteration)
+        latest_checkpoint_path = self.save_checkpoint(
+            iteration,
+            replay_sampler_rng_state=replay_buffer.rng_state,
+        )
         snapshot_path = self.save_snapshot(iteration)
 
         if total_losses:
@@ -137,7 +141,12 @@ class Trainer:
             snapshot_path=snapshot_path,
         )
 
-    def save_checkpoint(self, iteration: int) -> Path:
+    def save_checkpoint(
+        self,
+        iteration: int,
+        *,
+        replay_sampler_rng_state: dict[str, object] | None = None,
+    ) -> Path:
         latest_path = self.checkpoint_dir / "latest.pt"
         previous_path = self.checkpoint_dir / "previous.pt"
         payload = build_training_checkpoint_payload(
@@ -148,9 +157,15 @@ class Trainer:
             model_name=self.model_name,
             model_config=self.model_config,
             trainer_config=self.config,
+            replay_sampler_rng_state=replay_sampler_rng_state,
         )
         atomic_torch_save(payload, latest_path, previous_path=previous_path)
         self.last_checkpoint_iteration = iteration
+        self.replay_sampler_rng_state = (
+            dict(replay_sampler_rng_state)
+            if replay_sampler_rng_state is not None
+            else None
+        )
         return latest_path
 
     def save_snapshot(self, iteration: int) -> Path:
@@ -181,4 +196,5 @@ class Trainer:
         self.last_checkpoint_iteration = checkpoint.iteration
         self.model_name = checkpoint.model_name
         self.model_config = checkpoint.model_config
+        self.replay_sampler_rng_state = checkpoint.replay_sampler_rng_state
         self.model.to(self.device)
