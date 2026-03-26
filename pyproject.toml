@@ -1,0 +1,17 @@
+[project]
+name = "codfish"
+version = "0.0.0"
+description = "Chess engine training project."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2,<3",
+]
+
+[dependency-groups]
+train = [
+    "torch",
+]
+
+[tool.uv]
+package = false

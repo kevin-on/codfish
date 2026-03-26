@@ -67,23 +67,13 @@ target_include_directories(
 target_link_libraries(codfish_core PUBLIC Threads::Threads)
 
 if(CODFISH_BUILD_LEARNER_PYTHON)
-    find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+    set(Python3_FIND_VIRTUALENV FIRST)
     set(Python_FIND_VIRTUALENV FIRST)
+    find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
     set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH
         "Selected Python interpreter for nanobind" FORCE)
     find_package(Python ${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}
         COMPONENTS Interpreter Development.Module REQUIRED)
-
-    execute_process(
-        COMMAND "${Python3_EXECUTABLE}" -c "import numpy"
-        RESULT_VARIABLE CODFISH_NUMPY_IMPORT_RESULT
-        ERROR_VARIABLE CODFISH_NUMPY_IMPORT_ERROR
-        OUTPUT_QUIET)
-    if(NOT CODFISH_NUMPY_IMPORT_RESULT EQUAL 0)
-        message(FATAL_ERROR
-            "CODFISH_BUILD_LEARNER_PYTHON=ON requires numpy for "
-            "${Python3_EXECUTABLE}: ${CODFISH_NUMPY_IMPORT_ERROR}")
-    endif()
 
     include(FetchContent)
     FetchContent_Declare(
