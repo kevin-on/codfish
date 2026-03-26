@@ -96,23 +96,35 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
     set(CODFISH_PYTHON_PACKAGE_DIR "${PROJECT_BINARY_DIR}/python")
     set(CODFISH_PYTHON_LEARNER_DIR
         "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/learner")
-    file(MAKE_DIRECTORY "${CODFISH_PYTHON_LEARNER_DIR}")
-
-    configure_file(
+    set(CODFISH_PYTHON_SOURCES
         "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
-        "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/__init__.py"
-        COPYONLY)
-    configure_file(
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
-        "${CODFISH_PYTHON_LEARNER_DIR}/__init__.py"
-        COPYONLY)
-    configure_file(
-        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
-        "${CODFISH_PYTHON_LEARNER_DIR}/_api.py"
-        COPYONLY)
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py")
+    set(CODFISH_PYTHON_STAMP
+        "${CODFISH_PYTHON_PACKAGE_DIR}/.codfish_python_staged")
+
+    add_custom_command(
+        OUTPUT "${CODFISH_PYTHON_STAMP}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CODFISH_PYTHON_LEARNER_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
+                "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/__init__.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
+                "${CODFISH_PYTHON_LEARNER_DIR}/__init__.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
+                "${CODFISH_PYTHON_LEARNER_DIR}/_api.py"
+        COMMAND ${CMAKE_COMMAND} -E touch "${CODFISH_PYTHON_STAMP}"
+        DEPENDS ${CODFISH_PYTHON_SOURCES}
+        VERBATIM)
+    add_custom_target(codfish_python_package ALL
+        DEPENDS "${CODFISH_PYTHON_STAMP}")
 
     nanobind_add_module(_native src/learner/python_bindings.cc)
     target_link_libraries(_native PRIVATE codfish_core)
+    add_dependencies(_native codfish_python_package)
     set_target_properties(
         _native
         PROPERTIES
