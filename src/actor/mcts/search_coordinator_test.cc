@@ -197,7 +197,7 @@ TEST(SearchCoordinator, StartSeedsInitialGamesAndRunsTerminalTasks) {
   SearchCoordinator coordinator(
       SearchCoordinatorOptions{
           .num_workers = 2,
-          .num_initial_games = 3,
+          .num_games = 3,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 4,
@@ -225,7 +225,7 @@ TEST(SearchCoordinator, StartWiresInferencePathForYieldingTasks) {
   SearchCoordinator coordinator(
       SearchCoordinatorOptions{
           .num_workers = 1,
-          .num_initial_games = 2,
+          .num_games = 2,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 2,
@@ -253,7 +253,7 @@ TEST(SearchCoordinator, StopIsSafeWhenStartedIdle) {
   SearchCoordinator coordinator(
       SearchCoordinatorOptions{
           .num_workers = 1,
-          .num_initial_games = 0,
+          .num_games = 0,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 1,
@@ -282,7 +282,7 @@ TEST(SearchCoordinator, RawOutputDirStartsWriterAndPersistsCompletedGame) {
   SearchCoordinator coordinator(
       SearchCoordinatorOptions{
           .num_workers = 1,
-          .num_initial_games = 1,
+          .num_games = 1,
           .raw_output_dir = temp_dir.path,
           .inference =
               InferenceRuntimeOptions{

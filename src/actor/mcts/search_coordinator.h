@@ -26,7 +26,7 @@ class GameTaskFactory {
 
 struct SearchCoordinatorOptions {
   int num_workers = 0;
-  int num_initial_games = 0;
+  int num_games = 0;
   std::optional<std::filesystem::path> raw_output_dir;
   uint64_t raw_chunk_max_bytes = ChunkWriterOptions::kDefaultMaxChunkBytes;
   InferenceRuntimeOptions inference;
@@ -43,11 +43,11 @@ class SearchCoordinator {
   SearchCoordinator(const SearchCoordinator&) = delete;
   SearchCoordinator& operator=(const SearchCoordinator&) = delete;
 
-  void Start();
-  void Stop();
+ void Start();
+ void Stop();
 
  private:
-  void SeedInitialTasks();
+  void SeedGameTasks();
 
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue_;
   ThreadSafeQueue<PendingEval> request_queue_;

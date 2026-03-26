@@ -33,7 +33,7 @@ SearchCoordinator::SearchCoordinator(
           .completed_game_queue = &completed_game_queue_,
       }) {
   assert(options_.num_workers > 0);
-  assert(options_.num_initial_games >= 0);
+  assert(options_.num_games >= 0);
   assert(task_factory_ != nullptr);
   assert(backend_ != nullptr);
   assert(encoder_ != nullptr);
@@ -63,7 +63,7 @@ void SearchCoordinator::Start() {
   game_runner_.Start();
   inference_runtime_.Start();
   worker_runtime_.Start();
-  SeedInitialTasks();
+  SeedGameTasks();
   started_ = true;
 }
 
@@ -87,8 +87,8 @@ void SearchCoordinator::Stop() {
   }
 }
 
-void SearchCoordinator::SeedInitialTasks() {
-  for (int i = 0; i < options_.num_initial_games; ++i) {
+void SearchCoordinator::SeedGameTasks() {
+  for (int i = 0; i < options_.num_games; ++i) {
     std::unique_ptr<GameTask> task = task_factory_->Create();
     assert(task != nullptr);
     assert(task->searcher != nullptr);

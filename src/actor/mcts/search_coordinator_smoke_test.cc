@@ -109,7 +109,7 @@ TEST(SearchCoordinatorSmoke, GumbelMctsWithMockBackendCompletesGameAndWritesChun
   SearchCoordinator coordinator(
       SearchCoordinatorOptions{
           .num_workers = 1,
-          .num_initial_games = 1,
+          .num_games = 1,
           .raw_output_dir = temp_dir.path,
           .inference =
               InferenceRuntimeOptions{
