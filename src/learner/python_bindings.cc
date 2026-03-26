@@ -28,6 +28,11 @@ struct PythonEncodedGameSamples {
   nb::object wdl_targets;
 };
 
+struct PythonModelIOShape {
+  int input_channels = 0;
+  int policy_size = 0;
+};
+
 template <typename T>
 nb::object MakeOwnedNumpyArray(std::span<const T> values, nb::handle dtype,
                                nb::tuple shape) {
@@ -59,17 +64,26 @@ PythonEncodedGameSamples ToPythonEncodedGameSamples(
   };
 }
 
+PythonModelIOShape ToPythonModelIOShape() {
+  return PythonModelIOShape{
+      .input_channels = engine::kInputPlanes,
+      .policy_size = lczero::kPolicySize,
+  };
+}
+
 }  // namespace
 }  // namespace engine::learner
 
 NB_MODULE(_native, m) {
   using engine::learner::EncodedGameSamples;
   using engine::learner::PythonEncodedGameSamples;
+  using engine::learner::PythonModelIOShape;
   using engine::learner::RawChunkFile;
   using engine::learner::RawGame;
   using engine::learner::RawPly;
   using engine::learner::RawPolicyEntry;
   using engine::learner::ToPythonEncodedGameSamples;
+  using engine::learner::ToPythonModelIOShape;
 
   m.doc() = "Private learner bindings for codfish.";
 
@@ -124,6 +138,11 @@ NB_MODULE(_native, m) {
       .def_rw("policy_targets", &PythonEncodedGameSamples::policy_targets)
       .def_rw("wdl_targets", &PythonEncodedGameSamples::wdl_targets);
 
+  nb::class_<PythonModelIOShape>(m, "ModelIOShape")
+      .def(nb::init<>())
+      .def_rw("input_channels", &PythonModelIOShape::input_channels)
+      .def_rw("policy_size", &PythonModelIOShape::policy_size);
+
   m.def("read_raw_chunk_file", [](const std::string& path) {
     return engine::learner::ReadRawChunkFile(std::filesystem::path(path));
   });
@@ -131,4 +150,6 @@ NB_MODULE(_native, m) {
   m.def("encode_raw_game", [](const RawGame& raw_game) {
     return ToPythonEncodedGameSamples(engine::learner::EncodeRawGame(raw_game));
   });
+
+  m.def("get_model_io_shape", []() { return ToPythonModelIOShape(); });
 }

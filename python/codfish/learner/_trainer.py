@@ -42,7 +42,10 @@ class Trainer:
         self.last_checkpoint_iteration: int | None = None
 
     def set_model_metadata(
-        self, *, model_name: str, model_config: dict[str, object]
+        self,
+        *,
+        model_name: str,
+        model_config: dict[str, object],
     ) -> None:
         self.model_name = model_name
         self.model_config = dict(model_config)

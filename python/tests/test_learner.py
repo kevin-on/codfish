@@ -24,14 +24,18 @@ from codfish.learner import (
     RawGame,
     RawPly,
     RawPolicyEntry,
+    SmallAlphaZeroResNet,
+    SmallAlphaZeroResNetConfig,
     TrainIterationReport,
     TrainStepMetrics,
     Trainer,
     TrainerConfig,
     WandbConfig,
     encode_raw_game,
+    make_small_alphazero_resnet_spec,
     read_raw_chunk_file,
 )
+from codfish.learner._api import get_model_io_shape
 from codfish.learner._checkpoint import (
     load_snapshot_checkpoint,
     load_training_checkpoint,
@@ -131,8 +135,24 @@ def _input_sha256(samples: EncodedGameSamples) -> str:
     return hashlib.sha256(samples.inputs.tobytes()).hexdigest()
 
 
+def _model_shape() -> tuple[int, int]:
+    shape = get_model_io_shape()
+    return shape.input_channels, shape.policy_size
+
+
+def _input_channels() -> int:
+    return _model_shape()[0]
+
+
 def _policy_size() -> int:
-    return encode_raw_game(_canonical_raw_game()).policy_size
+    return _model_shape()[1]
+
+
+def _small_model_config() -> SmallAlphaZeroResNetConfig:
+    return SmallAlphaZeroResNetConfig(
+        input_channels=_input_channels(),
+        policy_size=_policy_size(),
+    )
 
 
 class _FakeWandbRun:
@@ -169,14 +189,68 @@ class _FakeWandbModule:
         self.artifact_calls += 1
 
 
+class SmallAlphaZeroResNetTest(unittest.TestCase):
+    def test_forward_returns_policy_and_wdl_logits(self) -> None:
+        config = _small_model_config()
+        model = SmallAlphaZeroResNet(config)
+
+        policy_logits, wdl_logits = model(
+            torch.zeros((2, config.input_channels, 8, 8), dtype=torch.float32)
+        )
+
+        self.assertEqual(tuple(policy_logits.shape), (2, config.policy_size))
+        self.assertEqual(tuple(wdl_logits.shape), (2, 3))
+
+    def test_forward_rejects_invalid_input_shape(self) -> None:
+        config = _small_model_config()
+        model = SmallAlphaZeroResNet(config)
+
+        with self.assertRaisesRegex(ValueError, "expected \\[B,"):
+            model(torch.zeros((2, config.input_channels + 1, 8, 8), dtype=torch.float32))
+
+    def test_make_small_alphazero_resnet_spec_exposes_full_model_config(
+        self,
+    ) -> None:
+        config = SmallAlphaZeroResNetConfig(
+            input_channels=117,
+            policy_size=1857,
+            trunk_channels=16,
+            num_blocks=2,
+            policy_channels=3,
+            value_channels=5,
+            value_hidden=32,
+        )
+
+        spec = make_small_alphazero_resnet_spec(config)
+        model = spec.factory()
+
+        self.assertEqual(spec.name, "small_alphazero_resnet")
+        self.assertEqual(
+            spec.config,
+            {
+                "input_channels": 117,
+                "policy_size": 1857,
+                "trunk_channels": 16,
+                "num_blocks": 2,
+                "policy_channels": 3,
+                "value_channels": 5,
+                "value_hidden": 32,
+            },
+        )
+        self.assertIsInstance(model, SmallAlphaZeroResNet)
+
+
 class TrainerTest(unittest.TestCase):
     class _ToyModel(torch.nn.Module):
-        def __init__(self, policy_size: int) -> None:
+        def __init__(self, input_channels: int, policy_size: int) -> None:
             super().__init__()
+            self.input_channels = input_channels
+            self.policy_size = policy_size
             self.last_input_dtype = None
             self.last_input_shape = None
-            self.policy_head = torch.nn.Linear(118 * 8 * 8, policy_size)
-            self.wdl_head = torch.nn.Linear(118 * 8 * 8, 3)
+            flat_size = input_channels * 8 * 8
+            self.policy_head = torch.nn.Linear(flat_size, policy_size)
+            self.wdl_head = torch.nn.Linear(flat_size, 3)
 
         def forward(
             self, inputs: torch.Tensor
@@ -211,9 +285,9 @@ class TrainerTest(unittest.TestCase):
         return buffer
 
     def _build_trainer(
-        self, checkpoint_dir: pathlib.Path, policy_size: int
+        self, checkpoint_dir: pathlib.Path, input_channels: int, policy_size: int
     ) -> tuple[Trainer, torch.nn.Module]:
-        model = self._ToyModel(policy_size)
+        model = self._ToyModel(input_channels, policy_size)
         trainer = Trainer(
             model,
             TrainerConfig(
@@ -233,7 +307,7 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, model = self._build_trainer(
-                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+                pathlib.Path(tmp_dir), buffer.input_channels, buffer.policy_size
             )
 
             before = {
@@ -248,7 +322,7 @@ class TrainerTest(unittest.TestCase):
         self.assertTrue(np.isfinite(metrics.wdl_loss))
         self.assertEqual(trainer.global_learner_step, 1)
         self.assertEqual(model.last_input_dtype, torch.float32)
-        self.assertEqual(model.last_input_shape, (2, 118, 8, 8))
+        self.assertEqual(model.last_input_shape, (2, buffer.input_channels, 8, 8))
         self.assertTrue(
             any(
                 not torch.equal(before[name], param.detach())
@@ -284,7 +358,7 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, _ = self._build_trainer(
-                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+                pathlib.Path(tmp_dir), buffer.input_channels, buffer.policy_size
             )
 
             with mock.patch.object(
@@ -319,7 +393,7 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, model = self._build_trainer(
-                checkpoint_dir, policy_size=buffer.policy_size
+                checkpoint_dir, buffer.input_channels, buffer.policy_size
             )
             trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
             latest_path = checkpoint_dir / "latest.pt"
@@ -328,7 +402,7 @@ class TrainerTest(unittest.TestCase):
                 for name, param in model.named_parameters()
             }
 
-            restored_model = self._ToyModel(buffer.policy_size)
+            restored_model = self._ToyModel(buffer.input_channels, buffer.policy_size)
             restored_trainer = Trainer(
                 restored_model,
                 TrainerConfig(
@@ -357,12 +431,12 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, _ = self._build_trainer(
-                checkpoint_dir, policy_size=buffer.policy_size
+                checkpoint_dir, buffer.input_channels, buffer.policy_size
             )
             trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
             latest_path = checkpoint_dir / "latest.pt"
 
-            restored_model = self._ToyModel(buffer.policy_size)
+            restored_model = self._ToyModel(buffer.input_channels, buffer.policy_size)
             restored_trainer = Trainer(
                 restored_model,
                 TrainerConfig(
@@ -387,12 +461,12 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, _ = self._build_trainer(
-                checkpoint_dir, policy_size=buffer.policy_size
+                checkpoint_dir, buffer.input_channels, buffer.policy_size
             )
             report = trainer.train_iteration(buffer, new_sample_count=1, iteration=2)
 
             restored_trainer, _ = self._build_trainer(
-                checkpoint_dir, policy_size=buffer.policy_size
+                checkpoint_dir, buffer.input_channels, buffer.policy_size
             )
 
             with self.assertRaisesRegex(ValueError, "training checkpoint"):
@@ -415,7 +489,7 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, _ = self._build_trainer(
-                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+                pathlib.Path(tmp_dir), buffer.input_channels, buffer.policy_size
             )
             report = trainer.train_iteration(buffer, new_sample_count=1, iteration=2)
             payload = torch.load(report.snapshot_path, map_location="cpu")
@@ -425,6 +499,59 @@ class TrainerTest(unittest.TestCase):
             self.assertIn("iteration", payload)
             self.assertNotIn("optimizer_state_dict", payload)
 
+    def test_load_training_checkpoint_accepts_legacy_flat_model_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = pathlib.Path(tmp_dir) / "legacy_training.pt"
+            torch.save(
+                {
+                    "format_version": 1,
+                    "model_state_dict": {},
+                    "optimizer_state_dict": {},
+                    "global_learner_step": 12,
+                    "iteration": 5,
+                    "model_name": "legacy-model",
+                    "model_config": {"kind": "legacy"},
+                    "trainer_config": {
+                        "learning_rate": 0.01,
+                        "optimizer_momentum": 0.9,
+                        "optimizer_weight_decay": 1e-4,
+                        "value_loss_weight": 1.25,
+                    },
+                },
+                path,
+            )
+
+            checkpoint = load_training_checkpoint(
+                path,
+                map_location=torch.device("cpu"),
+            )
+
+        self.assertEqual(checkpoint.model_name, "legacy-model")
+        self.assertEqual(checkpoint.model_config, {"kind": "legacy"})
+
+    def test_load_snapshot_checkpoint_accepts_legacy_flat_model_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = pathlib.Path(tmp_dir) / "legacy_snapshot.pt"
+            torch.save(
+                {
+                    "format_version": 1,
+                    "model_state_dict": {},
+                    "global_learner_step": 12,
+                    "iteration": 5,
+                    "model_name": "legacy-model",
+                    "model_config": {"kind": "legacy"},
+                },
+                path,
+            )
+
+            checkpoint = load_snapshot_checkpoint(
+                path,
+                map_location=torch.device("cpu"),
+            )
+
+        self.assertEqual(checkpoint.model_name, "legacy-model")
+        self.assertEqual(checkpoint.model_config, {"kind": "legacy"})
+
     def test_failed_checkpoint_save_keeps_latest_intact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             checkpoint_dir = pathlib.Path(tmp_dir)
@@ -432,7 +559,7 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, _ = self._build_trainer(
-                checkpoint_dir, policy_size=buffer.policy_size
+                checkpoint_dir, buffer.input_channels, buffer.policy_size
             )
             trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
 
@@ -455,7 +582,7 @@ class TrainerTest(unittest.TestCase):
             _write_chunk_file(chunk_path, [_canonical_raw_game()])
             buffer = self._build_buffer([chunk_path])
             trainer, _ = self._build_trainer(
-                pathlib.Path(tmp_dir), policy_size=buffer.policy_size
+                pathlib.Path(tmp_dir), buffer.input_channels, buffer.policy_size
             )
 
             report = trainer.train_iteration(buffer, new_sample_count=0, iteration=9)
@@ -472,10 +599,11 @@ class TrainerTest(unittest.TestCase):
 
 class LearnerRunnerTest(unittest.TestCase):
     class _ToyModel(torch.nn.Module):
-        def __init__(self, policy_size: int) -> None:
+        def __init__(self, input_channels: int, policy_size: int) -> None:
             super().__init__()
-            self.policy_head = torch.nn.Linear(118 * 8 * 8, policy_size)
-            self.wdl_head = torch.nn.Linear(118 * 8 * 8, 3)
+            flat_size = input_channels * 8 * 8
+            self.policy_head = torch.nn.Linear(flat_size, policy_size)
+            self.wdl_head = torch.nn.Linear(flat_size, 3)
 
         def forward(
             self, inputs: torch.Tensor
@@ -500,11 +628,14 @@ class LearnerRunnerTest(unittest.TestCase):
         )
 
     def _model_spec(self) -> ModelSpec:
-        policy_size = _policy_size()
         return ModelSpec(
             name="toy-model",
-            config={"channels": 118, "policy_size": policy_size},
-            factory=lambda: self._ToyModel(policy_size),
+            config={
+                "kind": "toy",
+                "input_channels": _input_channels(),
+                "policy_size": _policy_size(),
+            },
+            factory=lambda: self._ToyModel(_input_channels(), _policy_size()),
         )
 
     def _runner_config(
@@ -536,7 +667,11 @@ class LearnerRunnerTest(unittest.TestCase):
         self.assertEqual(runner.trainer.model_name, "toy-model")
         self.assertEqual(
             runner.trainer.model_config,
-            {"channels": 118, "policy_size": _policy_size()},
+            {
+                "kind": "toy",
+                "input_channels": _input_channels(),
+                "policy_size": _policy_size(),
+            },
         )
 
     def test_resume_with_existing_latest_restores_state(self) -> None:
@@ -568,9 +703,27 @@ class LearnerRunnerTest(unittest.TestCase):
         self.assertEqual(resumed_runner.trainer.model_name, "toy-model")
         self.assertEqual(
             resumed_runner.trainer.model_config,
-            {"channels": 118, "policy_size": _policy_size()},
+            {
+                "kind": "toy",
+                "input_channels": _input_channels(),
+                "policy_size": _policy_size(),
+            },
         )
         self.assertTrue(resumed_runner.trainer.optimizer.state_dict()["state"])
+
+    def test_runner_rejects_model_config_shape_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with mock.patch(
+                "codfish.learner._runner.get_model_io_shape",
+                return_value=mock.Mock(input_channels=7, policy_size=11),
+            ):
+                with self.assertRaisesRegex(ValueError, "input_channels"):
+                    LearnerRunner(
+                        self._model_spec(),
+                        self._trainer_config(),
+                        self._replay_config(),
+                        self._runner_config(pathlib.Path(tmp_dir)),
+                    )
 
     def test_resume_with_missing_latest_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -657,11 +810,24 @@ class LearnerRunnerTest(unittest.TestCase):
                 map_location=torch.device("cpu"),
             )
 
-        expected_config = {"channels": 118, "policy_size": _policy_size()}
         self.assertEqual(training_checkpoint.model_name, "toy-model")
-        self.assertEqual(training_checkpoint.model_config, expected_config)
+        self.assertEqual(
+            training_checkpoint.model_config,
+            {
+                "kind": "toy",
+                "input_channels": _input_channels(),
+                "policy_size": _policy_size(),
+            },
+        )
         self.assertEqual(snapshot_checkpoint.model_name, "toy-model")
-        self.assertEqual(snapshot_checkpoint.model_config, expected_config)
+        self.assertEqual(
+            snapshot_checkpoint.model_config,
+            {
+                "kind": "toy",
+                "input_channels": _input_channels(),
+                "policy_size": _policy_size(),
+            },
+        )
 
     def test_wandb_disabled_path_does_not_import_wandb(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -714,7 +880,11 @@ class LearnerRunnerTest(unittest.TestCase):
             {
                 "model": {
                     "name": "toy-model",
-                    "config": {"channels": 118, "policy_size": _policy_size()},
+                    "config": {
+                        "kind": "toy",
+                        "input_channels": _input_channels(),
+                        "policy_size": _policy_size(),
+                    },
                 },
                 "trainer": {
                     "learning_rate": 0.01,
@@ -748,7 +918,6 @@ class LearnerRunnerTest(unittest.TestCase):
                 "train/total_loss": report.mean_total_loss,
                 "train/policy_loss": report.mean_policy_loss,
                 "train/wdl_loss": report.mean_wdl_loss,
-                "train/num_updates": report.num_updates,
             },
         )
         self.assertEqual(fake_wandb.run.finish_calls, 1)
@@ -794,6 +963,15 @@ class LearnerRunnerTest(unittest.TestCase):
 
 
 class LearnerBindingsTest(unittest.TestCase):
+    def test_get_model_io_shape_matches_encoded_sample_metadata(self) -> None:
+        shape = get_model_io_shape()
+        samples = encode_raw_game(_canonical_raw_game())
+
+        self.assertGreater(shape.input_channels, 0)
+        self.assertGreater(shape.policy_size, 0)
+        self.assertEqual(shape.input_channels, samples.input_channels)
+        self.assertEqual(shape.policy_size, samples.policy_size)
+
     def test_read_raw_chunk_file_matches_cxx_golden_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             chunk_path = pathlib.Path(tmp_dir) / "golden.bin"

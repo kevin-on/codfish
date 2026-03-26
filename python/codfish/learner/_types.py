@@ -8,6 +8,18 @@ from pathlib import Path
 import torch
 
 
+@dataclass(slots=True, frozen=True)
+class ModelIOShape:
+    input_channels: int
+    policy_size: int
+
+    def __post_init__(self) -> None:
+        if self.input_channels <= 0:
+            raise ValueError("input_channels must be positive")
+        if self.policy_size <= 0:
+            raise ValueError("policy_size must be positive")
+
+
 @dataclass(slots=True)
 class TrainerConfig:
     learning_rate: float

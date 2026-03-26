@@ -53,7 +53,7 @@ def build_training_checkpoint_payload(
         "global_learner_step": global_learner_step,
         "iteration": iteration,
         "model_name": model_name,
-        "model_config": model_config,
+        "model_config": dict(model_config),
         "trainer_config": _trainer_config_payload(trainer_config),
     }
 
@@ -72,7 +72,7 @@ def build_snapshot_payload(
         "global_learner_step": global_learner_step,
         "iteration": iteration,
         "model_name": model_name,
-        "model_config": model_config,
+        "model_config": dict(model_config),
     }
 
 

@@ -89,6 +89,7 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
     set(CODFISH_PYTHON_SOURCES
         "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_alphazero_resnet.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_checkpoint.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_replay.py"
@@ -109,6 +110,9 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/__init__.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/learner/_alphazero_resnet.py"
+                "${CODFISH_PYTHON_LEARNER_DIR}/_alphazero_resnet.py"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/_api.py"

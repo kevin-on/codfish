@@ -1,3 +1,8 @@
+from ._alphazero_resnet import (
+    SmallAlphaZeroResNet,
+    SmallAlphaZeroResNetConfig,
+    make_small_alphazero_resnet_spec,
+)
 from ._api import (
     EncodedGameSamples,
     GameResult,
@@ -32,11 +37,14 @@ __all__ = [
     "RawGame",
     "RawPly",
     "RawPolicyEntry",
+    "SmallAlphaZeroResNet",
+    "SmallAlphaZeroResNetConfig",
     "TrainIterationReport",
     "TrainStepMetrics",
     "Trainer",
     "TrainerConfig",
     "WandbConfig",
     "encode_raw_game",
+    "make_small_alphazero_resnet_spec",
     "read_raw_chunk_file",
 ]

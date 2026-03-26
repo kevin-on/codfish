@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ._api import get_model_io_shape
 from ._replay import ReplayBuffer, ReplayBufferConfig
 from ._trainer import Trainer
 from ._types import (
@@ -28,6 +29,7 @@ class LearnerRunner:
         self.replay_buffer_config = replay_buffer_config
         self.config = config
 
+        _validate_model_spec_shape(model_spec)
         self.model = model_spec.factory()
         self.trainer = Trainer(
             self.model,
@@ -36,7 +38,8 @@ class LearnerRunner:
             checkpoint_dir=config.checkpoint_dir,
         )
         self.trainer.set_model_metadata(
-            model_name=model_spec.name, model_config=model_spec.config
+            model_name=model_spec.name,
+            model_config=model_spec.config,
         )
         self.replay_buffer = ReplayBuffer(replay_buffer_config)
         self._wandb_session: WandbSession | None = None
@@ -83,3 +86,21 @@ class LearnerRunner:
         traceback: Any,
     ) -> None:
         self.close()
+
+
+def _validate_model_spec_shape(model_spec: ModelSpec) -> None:
+    native_shape = get_model_io_shape()
+    input_channels = model_spec.config.get("input_channels")
+    policy_size = model_spec.config.get("policy_size")
+    if not isinstance(input_channels, int):
+        raise ValueError("model_spec.config must contain integer input_channels")
+    if not isinstance(policy_size, int):
+        raise ValueError("model_spec.config must contain integer policy_size")
+    if input_channels != native_shape.input_channels:
+        raise ValueError(
+            "model_spec.config input_channels does not match native learner shape"
+        )
+    if policy_size != native_shape.policy_size:
+        raise ValueError(
+            "model_spec.config policy_size does not match native learner shape"
+        )

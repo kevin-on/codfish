@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 
 from . import _native
+from ._types import ModelIOShape
 
 GameResult = _native.GameResult
 
@@ -108,6 +109,13 @@ def _from_native_encoded_samples(
     )
 
 
+def _from_native_model_io_shape(shape: _native.ModelIOShape) -> ModelIOShape:
+    return ModelIOShape(
+        input_channels=shape.input_channels,
+        policy_size=shape.policy_size,
+    )
+
+
 def read_raw_chunk_file(path: str | os.PathLike[str]) -> RawChunkFile:
     return _from_native_raw_chunk(_native.read_raw_chunk_file(os.fspath(path)))
 
@@ -118,3 +126,7 @@ def encode_raw_game(raw_game: RawGame) -> EncodedGameSamples:
     return _from_native_encoded_samples(
         _native.encode_raw_game(_to_native_raw_game(raw_game))
     )
+
+
+def get_model_io_shape() -> ModelIOShape:
+    return _from_native_model_io_shape(_native.get_model_io_shape())
