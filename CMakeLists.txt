@@ -99,7 +99,8 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
     set(CODFISH_PYTHON_SOURCES
         "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
-        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py")
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
+        "${PROJECT_SOURCE_DIR}/python/codfish/learner/_replay.py")
     set(CODFISH_PYTHON_STAMP
         "${CODFISH_PYTHON_PACKAGE_DIR}/.codfish_python_staged")
 
@@ -116,6 +117,9 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/_api.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/learner/_replay.py"
+                "${CODFISH_PYTHON_LEARNER_DIR}/_replay.py"
         COMMAND ${CMAKE_COMMAND} -E touch "${CODFISH_PYTHON_STAMP}"
         DEPENDS ${CODFISH_PYTHON_SOURCES}
         VERBATIM)
