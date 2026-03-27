@@ -945,6 +945,7 @@ class LearnerRunnerTest(unittest.TestCase):
                 "policy_size": _policy_size(),
             },
         )
+        self.assertIsNone(training_checkpoint.wandb_run_id)
         self.assertIsNotNone(training_checkpoint.replay_sampler_rng_state)
         self.assertEqual(snapshot_checkpoint.model_name, "toy-model")
         self.assertEqual(

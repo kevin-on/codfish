@@ -40,6 +40,7 @@ class Trainer:
         )
         self.global_learner_step = 0
         self.last_checkpoint_iteration: int | None = None
+        self.wandb_run_id: str | None = None
         self.replay_sampler_rng_state: dict[str, object] | None = None
 
     def set_model_metadata(
@@ -157,6 +158,7 @@ class Trainer:
             model_name=self.model_name,
             model_config=self.model_config,
             trainer_config=self.config,
+            wandb_run_id=self.wandb_run_id,
             replay_sampler_rng_state=replay_sampler_rng_state,
         )
         atomic_torch_save(payload, latest_path, previous_path=previous_path)
@@ -196,5 +198,6 @@ class Trainer:
         self.last_checkpoint_iteration = checkpoint.iteration
         self.model_name = checkpoint.model_name
         self.model_config = checkpoint.model_config
+        self.wandb_run_id = checkpoint.wandb_run_id
         self.replay_sampler_rng_state = checkpoint.replay_sampler_rng_state
         self.model.to(self.device)

@@ -6,11 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy>=2,<3",
-]
-
-[dependency-groups]
-train = [
     "torch",
+    "wandb",
 ]
 
 [tool.uv]

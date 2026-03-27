@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import importlib
 
 from ._checkpoint import _trainer_config_payload
@@ -39,7 +40,7 @@ class WandbSession:
                     "config": dict(model_spec.config),
                 },
                 "trainer": _trainer_config_payload(trainer_config),
-                "replay": _replay_buffer_config_payload(replay_buffer_config),
+                "replay": asdict(replay_buffer_config),
                 "runner": {"resume": resume},
             },
         )
@@ -64,14 +65,3 @@ class WandbSession:
             return
         self._run.finish()
         self._closed = True
-
-
-def _replay_buffer_config_payload(
-    replay_buffer_config: ReplayBufferConfig,
-) -> dict[str, object]:
-    return {
-        "sample_capacity": replay_buffer_config.sample_capacity,
-        "batch_size": replay_buffer_config.batch_size,
-        "replay_ratio": replay_buffer_config.replay_ratio,
-        "seed": replay_buffer_config.seed,
-    }

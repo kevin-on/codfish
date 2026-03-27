@@ -130,3 +130,28 @@ def encode_raw_game(raw_game: RawGame) -> EncodedGameSamples:
 
 def get_model_io_shape() -> ModelIOShape:
     return _from_native_model_io_shape(_native.get_model_io_shape())
+
+
+def run_mock_selfplay(
+    raw_output_dir: str | os.PathLike[str],
+    *,
+    num_workers: int,
+    num_games: int,
+    raw_chunk_max_bytes: int,
+    num_action: int,
+    num_simulation: int,
+    c_puct: float,
+    c_visit: float,
+    c_scale: float,
+) -> None:
+    _native.run_mock_selfplay(
+        os.fspath(raw_output_dir),
+        num_workers,
+        num_games,
+        raw_chunk_max_bytes,
+        num_action,
+        num_simulation,
+        c_puct,
+        c_visit,
+        c_scale,
+    )

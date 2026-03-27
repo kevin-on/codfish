@@ -14,6 +14,7 @@ set(CODFISH_PRODUCTION_SOURCES
     src/actor/backends/mock_backend.cc
     src/actor/mcts/output/chunk_writer_runtime.cc
     src/actor/mcts/output/raw_chunk_format.cc
+    src/actor/mcts/mock_selfplay.cc
     src/actor/mcts/runtime/game_runner.cc
     src/actor/mcts/runtime/inference_runtime.cc
     src/actor/mcts/runtime/worker_runtime.cc
@@ -88,6 +89,7 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
         "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/learner")
     set(CODFISH_PYTHON_SOURCES
         "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
+        "${PROJECT_SOURCE_DIR}/python/codfish/orchestrator.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_alphazero_resnet.py"
         "${PROJECT_SOURCE_DIR}/python/codfish/learner/_api.py"
@@ -107,6 +109,9 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/__init__.py"
                 "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/__init__.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PROJECT_SOURCE_DIR}/python/codfish/orchestrator.py"
+                "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/orchestrator.py"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
                 "${CODFISH_PYTHON_LEARNER_DIR}/__init__.py"
@@ -148,6 +153,7 @@ if(CODFISH_BUILD_LEARNER_PYTHON)
         PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CODFISH_PYTHON_LEARNER_DIR}"
             RUNTIME_OUTPUT_DIRECTORY "${CODFISH_PYTHON_LEARNER_DIR}")
+
 endif()
 
 set(CODFISH_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}")

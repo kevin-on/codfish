@@ -29,16 +29,8 @@ Create the default environment:
 uv sync
 ```
 
-This installs the default Python dependencies, currently just `numpy`.
-
-Install the training extras as well:
-
-```bash
-uv sync --group train
-```
-
-This adds `torch` on top of the default environment. Without the `train` group,
-trainer tests are skipped.
+This installs the Python dependencies used by the learner and orchestrator,
+including `numpy`, `torch`, and `wandb`.
 
 ## Configure
 

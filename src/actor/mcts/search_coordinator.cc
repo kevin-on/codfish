@@ -1,7 +1,6 @@
 #include "actor/mcts/search_coordinator.h"
 
 #include <cassert>
-#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -43,14 +42,13 @@ SearchCoordinator::SearchCoordinator(
 
 SearchCoordinator::~SearchCoordinator() { StopRun(); }
 
-bool SearchCoordinator::RunGames(const RunGamesOptions& options) {
+void SearchCoordinator::RunGames(const RunGamesOptions& options) {
   bool cleanup_needed = true;
   try {
     StartRun(options);
-    const bool completed = WaitForCompletedGames(options);
+    WaitForCompletedGames(options.num_games);
     StopRun();
     cleanup_needed = false;
-    return completed;
   } catch (...) {
     if (cleanup_needed) {
       StopRun();
@@ -62,7 +60,6 @@ bool SearchCoordinator::RunGames(const RunGamesOptions& options) {
 void SearchCoordinator::StartRun(const RunGamesOptions& options) {
   assert(options.num_games >= 0);
   assert(options.raw_chunk_max_bytes > 0);
-  assert(options.timeout >= std::chrono::steady_clock::duration::zero());
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -114,14 +111,12 @@ void SearchCoordinator::StopRun() {
   }
 }
 
-bool SearchCoordinator::WaitForCompletedGames(const RunGamesOptions& options) {
+void SearchCoordinator::WaitForCompletedGames(int num_games) {
   std::unique_lock<std::mutex> lock(state_mu_);
-  if (options.num_games == 0) return true;
+  if (num_games == 0) return;
 
-  const auto deadline = std::chrono::steady_clock::now() + options.timeout;
-  return completion_cv_.wait_until(
-      lock, deadline,
-      [this, &options] { return completed_games_ >= options.num_games; });
+  completion_cv_.wait(lock,
+                      [this, num_games] { return completed_games_ >= num_games; });
 }
 
 void SearchCoordinator::OnCompletedGame() {

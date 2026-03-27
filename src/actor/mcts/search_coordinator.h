@@ -1,6 +1,5 @@
 #pragma once
 
-#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -35,7 +34,6 @@ struct RunGamesOptions {
   int num_games = 0;
   std::optional<std::filesystem::path> raw_output_dir;
   uint64_t raw_chunk_max_bytes = ChunkWriterOptions::kDefaultMaxChunkBytes;
-  std::chrono::steady_clock::duration timeout;
 };
 
 class SearchCoordinator {
@@ -49,12 +47,12 @@ class SearchCoordinator {
   SearchCoordinator(const SearchCoordinator&) = delete;
   SearchCoordinator& operator=(const SearchCoordinator&) = delete;
 
-  bool RunGames(const RunGamesOptions& options);
+  void RunGames(const RunGamesOptions& options);
 
  private:
   void StartRun(const RunGamesOptions& options);
   void StopRun();
-  bool WaitForCompletedGames(const RunGamesOptions& options);
+  void WaitForCompletedGames(int num_games);
   void OnCompletedGame();
   void SeedGameTasks(int num_games);
 

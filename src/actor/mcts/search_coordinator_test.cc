@@ -214,11 +214,9 @@ TEST(SearchCoordinator, RunGamesSeedsGamesAndRunsTerminalTasks) {
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  EXPECT_TRUE(coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = 3,
-          .timeout = 2s,
-      }));
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = 3,
+  });
 
   EXPECT_EQ(probe.created.load(), 3);
   EXPECT_EQ(probe.run_started.load(), 3);
@@ -243,11 +241,9 @@ TEST(SearchCoordinator, RunGamesWiresInferencePathForYieldingTasks) {
       std::make_unique<CountingTaskFactory<YieldOnceTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  EXPECT_TRUE(coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = 2,
-          .timeout = 2s,
-      }));
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = 2,
+  });
 
   EXPECT_EQ(probe.created.load(), 2);
   EXPECT_EQ(probe.run_started.load(), 2);
@@ -272,11 +268,9 @@ TEST(SearchCoordinator, RunGamesAllowsZeroGames) {
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  EXPECT_TRUE(coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = 0,
-          .timeout = 2s,
-      }));
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = 0,
+  });
 
   EXPECT_EQ(probe.created.load(), 0);
   EXPECT_EQ(probe.run_started.load(), 0);
@@ -301,16 +295,13 @@ TEST(SearchCoordinator, RunGamesRejectsSecondCallAtRuntime) {
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  EXPECT_TRUE(coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = 1,
-          .timeout = 2s,
-      }));
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = 1,
+  });
   EXPECT_THROW(
       coordinator.RunGames(
           RunGamesOptions{
               .num_games = 1,
-              .timeout = 2s,
           }),
       std::logic_error);
 }
@@ -336,7 +327,6 @@ TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
       coordinator.RunGames(
           RunGamesOptions{
               .num_games = 2,
-              .timeout = 2s,
           }),
       std::runtime_error);
 
@@ -362,12 +352,10 @@ TEST(SearchCoordinator, RunGamesWithRawOutputPersistsCompletedGame) {
           &probe),
       backend, &encoder, ModelManifest{});
 
-  EXPECT_TRUE(coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = 1,
-          .raw_output_dir = temp_dir.path,
-          .timeout = 2s,
-      }));
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = 1,
+      .raw_output_dir = temp_dir.path,
+  });
 
   EXPECT_EQ(probe.created.load(), 1);
   EXPECT_EQ(probe.run_started.load(), 2);

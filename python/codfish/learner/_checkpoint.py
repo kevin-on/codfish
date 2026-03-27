@@ -24,6 +24,7 @@ class TrainingCheckpoint:
     model_name: str
     model_config: dict[str, object]
     trainer_config: TrainerConfig
+    wandb_run_id: str | None
     replay_sampler_rng_state: dict[str, object] | None
 
 
@@ -46,6 +47,7 @@ def build_training_checkpoint_payload(
     model_name: str,
     model_config: dict[str, object],
     trainer_config: TrainerConfig,
+    wandb_run_id: str | None = None,
     replay_sampler_rng_state: dict[str, object] | None,
 ) -> dict[str, object]:
     return {
@@ -57,6 +59,7 @@ def build_training_checkpoint_payload(
         "model_name": model_name,
         "model_config": dict(model_config),
         "trainer_config": _trainer_config_payload(trainer_config),
+        "wandb_run_id": wandb_run_id,
         "replay_sampler_rng_state": (
             dict(replay_sampler_rng_state)
             if replay_sampler_rng_state is not None
@@ -133,6 +136,11 @@ def _parse_training_checkpoint(payload: dict[str, object]) -> TrainingCheckpoint
         trainer_config=_parse_trainer_config(
             _require_dict(payload, "trainer_config", "training checkpoint")
         ),
+        wandb_run_id=_optional_require_str(
+            payload,
+            "wandb_run_id",
+            "training checkpoint",
+        ),
         replay_sampler_rng_state=_optional_require_dict(
             payload,
             "replay_sampler_rng_state",
@@ -205,6 +213,17 @@ def _require_str(payload: dict[str, object], key: str, context: str) -> str:
     value = _require_key(payload, key, context)
     if not isinstance(value, str):
         raise ValueError(f"{context} field {key} must be a str")
+    return value
+
+
+def _optional_require_str(
+    payload: dict[str, object], key: str, context: str
+) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{context} field {key} must be a str or None")
     return value
 
 

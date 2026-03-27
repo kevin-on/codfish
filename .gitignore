@@ -10,6 +10,8 @@
 .cache/
 .venv/
 .tmp_test_bin/
+/tmp/
+/wandb/
 *.swp
 *.swo
 *~

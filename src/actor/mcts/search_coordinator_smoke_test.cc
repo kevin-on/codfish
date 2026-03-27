@@ -99,12 +99,10 @@ TEST(SearchCoordinatorSmoke, GumbelMctsWithMockBackendCompletesGameAndWritesChun
   const std::string expected_initial_fen = lczero::PositionToFen(
       lczero::Position::FromFen(lczero::ChessBoard::kStartposFen));
 
-  ASSERT_TRUE(coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = 1,
-          .raw_output_dir = temp_dir.path,
-          .timeout = 120s,
-      }));
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = 1,
+      .raw_output_dir = temp_dir.path,
+  });
 
   const raw_chunk_format::ParsedChunk parsed_chunk =
       raw_chunk_format::ParseChunk(ReadFileBytes(chunk_path));
