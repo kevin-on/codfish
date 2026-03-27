@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import pathlib
 import struct
@@ -8,10 +9,19 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 import torch
 
+from codfish._run_layout import partial_path
+from codfish.artifacts import (
+    AOTI_ARTIFACT_FORMAT_VERSION,
+    AOTI_MANIFEST_FILE,
+    AOTI_PACKAGE_FILE,
+    AOTI_RUNTIME,
+    AOTI_TARGET_DEVICE,
+)
 from codfish.learner import (
     GameResult,
     LearnerRunner,
@@ -34,7 +44,6 @@ from codfish.learner._checkpoint import (
 from codfish.orchestrator import (
     NativeSelfPlayLauncher,
     SelfPlayConfig,
-    _partial_iteration_dir,
     run_selfplay_update_loop,
 )
 
@@ -138,6 +147,37 @@ def _toy_model_spec() -> ModelSpec:
     )
 
 
+def _counter_model_spec() -> ModelSpec:
+    input_channels, policy_size = _model_shape()
+    init_counter = 0
+
+    class CounterModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            nonlocal init_counter
+            init_counter += 1
+            flat_size = input_channels * 8 * 8
+            self.policy_head = torch.nn.Linear(flat_size, policy_size)
+            self.wdl_head = torch.nn.Linear(flat_size, 3)
+            with torch.no_grad():
+                for parameter in self.parameters():
+                    parameter.fill_(float(init_counter))
+
+        def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            flat = inputs.reshape(inputs.shape[0], -1)
+            return self.policy_head(flat), self.wdl_head(flat)
+
+    return ModelSpec(
+        name="counter-model",
+        config={
+            "kind": "counter",
+            "input_channels": input_channels,
+            "policy_size": policy_size,
+        },
+        factory=CounterModel,
+    )
+
+
 def _trainer_config() -> TrainerConfig:
     return TrainerConfig(
         learning_rate=0.05,
@@ -206,6 +246,38 @@ def _write_minimal_checkpoint(
     atomic_torch_save(payload, learner_dir / "latest.pt")
 
 
+def _write_fake_artifact(
+    artifact_dir: pathlib.Path,
+    *,
+    model_name: str,
+    model_config: dict[str, object],
+    iteration: int,
+    global_learner_step: int,
+) -> None:
+    artifact_dir.mkdir(parents=True, exist_ok=False)
+    (artifact_dir / AOTI_PACKAGE_FILE).write_bytes(b"fake-pt2-package")
+    (artifact_dir / AOTI_MANIFEST_FILE).write_text(
+        json.dumps(
+            {
+                "format_version": AOTI_ARTIFACT_FORMAT_VERSION,
+                "runtime": AOTI_RUNTIME,
+                "target_device": AOTI_TARGET_DEVICE,
+                "package_file": AOTI_PACKAGE_FILE,
+                "model_name": model_name,
+                "model_config": dict(model_config),
+                "input_channels": model_config["input_channels"],
+                "policy_size": model_config["policy_size"],
+                "iteration": iteration,
+                "global_learner_step": global_learner_step,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class _FakeWandbRun:
     def __init__(self, run_id: str = "fake-wandb-run-id") -> None:
         self.id = run_id
@@ -249,6 +321,7 @@ class _FakeLearnerRunner:
         self.trainer_config = trainer_config
         self.replay_buffer_config = replay_buffer_config
         self.config = config
+        self.model = model_spec.factory()
         self.trainer = type("FakeTrainer", (), {"wandb_run_id": None})()
         self.run_calls: list[tuple[list[pathlib.Path], list[pathlib.Path], int]] = []
         self.closed = False
@@ -287,23 +360,96 @@ class _FakeLearnerRunner:
         self.close()
 
 
+def _clone_state_dict(
+    state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    return {key: value.detach().cpu().clone() for key, value in state_dict.items()}
+
+
 class OrchestratorTest(unittest.TestCase):
     def setUp(self) -> None:
         _FakeLearnerRunner.instances = []
 
+    def _fake_export_artifact(
+        self,
+        *,
+        model: torch.nn.Module,
+        model_name: str,
+        model_config: dict[str, object],
+        artifact_dir_path: str | os.PathLike[str],
+        iteration: int,
+        global_learner_step: int,
+    ) -> pathlib.Path:
+        del model
+        artifact_path = pathlib.Path(artifact_dir_path)
+        _write_fake_artifact(
+            artifact_path,
+            model_name=model_name,
+            model_config=model_config,
+            iteration=iteration,
+            global_learner_step=global_learner_step,
+        )
+        return artifact_path
+
+    def _fake_regenerate_artifact(
+        self,
+        *,
+        model_spec: ModelSpec,
+        checkpoint_path: str | os.PathLike[str],
+        artifact_dir_path: str | os.PathLike[str],
+        expected_iteration: int | None = None,
+    ) -> pathlib.Path:
+        checkpoint = load_training_checkpoint(
+            checkpoint_path,
+            map_location=torch.device("cpu"),
+        )
+        if expected_iteration is not None:
+            self.assertEqual(checkpoint.iteration, expected_iteration)
+        artifact_path = pathlib.Path(artifact_dir_path)
+        _write_fake_artifact(
+            artifact_path,
+            model_name=model_spec.name,
+            model_config=model_spec.config,
+            iteration=checkpoint.iteration,
+            global_learner_step=checkpoint.global_learner_step,
+        )
+        return artifact_path
+
+    @contextmanager
+    def _patched_aoti(self):
+        with (
+            mock.patch(
+                "codfish.orchestrator.torch.cuda.is_available",
+                return_value=True,
+            ),
+            mock.patch(
+                "codfish.orchestrator.export_model_to_aoti_artifact",
+                side_effect=self._fake_export_artifact,
+            ),
+            mock.patch(
+                "codfish.orchestrator.regenerate_aoti_artifact_from_checkpoint",
+                side_effect=self._fake_regenerate_artifact,
+            ),
+        ):
+            yield
+
     def test_run_selfplay_update_loop_fresh_uses_ephemeral_runners(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             run_root = pathlib.Path(tmp_dir)
+            seen_artifact_names: list[str] = []
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
+                seen_artifact_names.append(artifact_dir.name)
                 _write_chunk_file(
                     output_dir / "games-000001.bin", [_canonical_raw_game()]
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -323,6 +469,17 @@ class OrchestratorTest(unittest.TestCase):
                     replay_buffer_config=_replay_config(),
                     runner_config=_runner_config(run_root, resume=False),
                 )
+
+            self.assertTrue(
+                (run_root / "artifacts" / "iter_000000" / AOTI_MANIFEST_FILE).exists()
+            )
+            self.assertTrue(
+                (run_root / "artifacts" / "iter_000001" / AOTI_MANIFEST_FILE).exists()
+            )
+            self.assertTrue(
+                (run_root / "artifacts" / "iter_000002" / AOTI_MANIFEST_FILE).exists()
+            )
+            self.assertEqual(seen_artifact_names, ["iter_000000", "iter_000001"])
 
         self.assertEqual([report.iteration for report in reports], [1, 2])
         self.assertEqual(len(_FakeLearnerRunner.instances), 2)
@@ -358,13 +515,16 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
+                self.assertEqual(artifact_dir.name, "iter_000005")
                 _write_chunk_file(
                     output_dir / "games-000001.bin", [_canonical_raw_game()]
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -391,7 +551,10 @@ class OrchestratorTest(unittest.TestCase):
     def test_run_selfplay_update_loop_rejects_missing_latest_on_resume(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             run_root = pathlib.Path(tmp_dir)
-            with self.assertRaisesRegex(FileNotFoundError, "latest.pt"):
+            with (
+                self._patched_aoti(),
+                self.assertRaisesRegex(FileNotFoundError, "latest.pt"),
+            ):
                 run_selfplay_update_loop(
                     run_root=run_root,
                     num_iterations=1,
@@ -401,6 +564,295 @@ class OrchestratorTest(unittest.TestCase):
                     replay_buffer_config=_replay_config(),
                     runner_config=_runner_config(run_root, resume=True),
                 )
+
+    def test_run_selfplay_update_loop_rejects_missing_cuda(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            with self.assertRaisesRegex(RuntimeError, "requires CUDA"):
+                run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=1,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=_toy_model_spec(),
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=False),
+                )
+
+    def test_run_selfplay_update_loop_rejects_mismatched_bootstrap_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            _write_fake_artifact(
+                run_root / "artifacts" / "iter_000000",
+                model_name="wrong-model",
+                model_config={
+                    "kind": "toy",
+                    "input_channels": _model_shape()[0],
+                    "policy_size": _model_shape()[1],
+                },
+                iteration=0,
+                global_learner_step=0,
+            )
+
+            with (
+                mock.patch(
+                    "codfish.orchestrator.torch.cuda.is_available",
+                    return_value=True,
+                ),
+                self.assertRaisesRegex(ValueError, "artifact model_name"),
+            ):
+                run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=1,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=_toy_model_spec(),
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=False),
+                )
+
+    def test_run_selfplay_update_loop_regenerates_missing_resume_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            learner_dir = run_root / "learner"
+            learner_dir.mkdir(parents=True, exist_ok=True)
+            _write_minimal_checkpoint(
+                learner_dir,
+                iteration=2,
+                trainer_config=_trainer_config(),
+            )
+            for iteration in range(1, 3):
+                (run_root / "selfplay" / f"iter_{iteration:06d}").mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+
+            regenerate_calls: list[tuple[pathlib.Path, pathlib.Path]] = []
+
+            def recording_regenerate(
+                *,
+                model_spec: ModelSpec,
+                checkpoint_path: str | os.PathLike[str],
+                artifact_dir_path: str | os.PathLike[str],
+                expected_iteration: int | None = None,
+            ) -> pathlib.Path:
+                regenerate_calls.append(
+                    (pathlib.Path(checkpoint_path), pathlib.Path(artifact_dir_path))
+                )
+                return self._fake_regenerate_artifact(
+                    model_spec=model_spec,
+                    checkpoint_path=checkpoint_path,
+                    artifact_dir_path=artifact_dir_path,
+                    expected_iteration=expected_iteration,
+                )
+
+            def fake_run_selfplay(
+                launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
+                output_dir: pathlib.Path,
+            ) -> None:
+                self.assertEqual(artifact_dir.name, "iter_000002")
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
+
+            with (
+                mock.patch(
+                    "codfish.orchestrator.torch.cuda.is_available",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.export_model_to_aoti_artifact",
+                    side_effect=self._fake_export_artifact,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.regenerate_aoti_artifact_from_checkpoint",
+                    side_effect=recording_regenerate,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+            ):
+                reports = run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=1,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=_toy_model_spec(),
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=True),
+                )
+
+            self.assertEqual([report.iteration for report in reports], [3])
+            self.assertEqual(
+                regenerate_calls,
+                [
+                    (
+                        learner_dir / "latest.pt",
+                        run_root / "artifacts" / "iter_000002",
+                    )
+                ],
+            )
+            self.assertTrue(
+                (run_root / "artifacts" / "iter_000002" / AOTI_MANIFEST_FILE).exists()
+            )
+
+    def test_run_selfplay_update_loop_rejects_mismatched_existing_resume_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            learner_dir = run_root / "learner"
+            learner_dir.mkdir(parents=True, exist_ok=True)
+            _write_minimal_checkpoint(
+                learner_dir,
+                iteration=2,
+                trainer_config=_trainer_config(),
+            )
+            for iteration in range(1, 3):
+                (run_root / "selfplay" / f"iter_{iteration:06d}").mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+            _write_fake_artifact(
+                run_root / "artifacts" / "iter_000002",
+                model_name="toy-model",
+                model_config={
+                    "kind": "wrong-kind",
+                    "input_channels": _model_shape()[0],
+                    "policy_size": _model_shape()[1],
+                },
+                iteration=2,
+                global_learner_step=0,
+            )
+
+            with (
+                mock.patch(
+                    "codfish.orchestrator.torch.cuda.is_available",
+                    return_value=True,
+                ),
+                self.assertRaisesRegex(ValueError, "artifact model_config"),
+            ):
+                run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=1,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=_toy_model_spec(),
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=True),
+                )
+
+    def test_fresh_run_bootstrap_artifact_matches_iteration_one_start_weights(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            model_spec = _counter_model_spec()
+            bootstrap_state: dict[str, torch.Tensor] | None = None
+
+            def recording_export(
+                *,
+                model: torch.nn.Module,
+                model_name: str,
+                model_config: dict[str, object],
+                artifact_dir_path: str | os.PathLike[str],
+                iteration: int,
+                global_learner_step: int,
+            ) -> pathlib.Path:
+                nonlocal bootstrap_state
+                artifact_path = pathlib.Path(artifact_dir_path)
+                _write_fake_artifact(
+                    artifact_path,
+                    model_name=model_name,
+                    model_config=model_config,
+                    iteration=iteration,
+                    global_learner_step=global_learner_step,
+                )
+                if iteration == 0:
+                    bootstrap_state = _clone_state_dict(model.state_dict())
+                return artifact_path
+
+            class RecordingLearnerRunner(_FakeLearnerRunner):
+                observed_initial_state: dict[str, torch.Tensor] | None = None
+
+                def run_iteration(
+                    self,
+                    historical_chunk_paths: list[str | os.PathLike[str]],
+                    new_chunk_paths: list[str | os.PathLike[str]],
+                    iteration: int,
+                ) -> TrainIterationReport:
+                    type(self).observed_initial_state = _clone_state_dict(
+                        self.model.state_dict()
+                    )
+                    return super().run_iteration(
+                        historical_chunk_paths,
+                        new_chunk_paths,
+                        iteration,
+                    )
+
+            def fake_run_selfplay(
+                launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
+                output_dir: pathlib.Path,
+            ) -> None:
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
+
+            with (
+                mock.patch(
+                    "codfish.orchestrator.torch.cuda.is_available",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.export_model_to_aoti_artifact",
+                    side_effect=recording_export,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.regenerate_aoti_artifact_from_checkpoint",
+                    side_effect=self._fake_regenerate_artifact,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    RecordingLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+            ):
+                reports = run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=1,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=model_spec,
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=False),
+                )
+
+        self.assertEqual([report.iteration for report in reports], [1])
+        self.assertIsNotNone(bootstrap_state)
+        self.assertIsNotNone(RecordingLearnerRunner.observed_initial_state)
+        self.assertEqual(
+            bootstrap_state.keys(),
+            RecordingLearnerRunner.observed_initial_state.keys(),
+        )
+        for key, value in bootstrap_state.items():
+            self.assertTrue(
+                torch.equal(value, RecordingLearnerRunner.observed_initial_state[key]),
+                msg=f"bootstrap and runner state differ for {key}",
+            )
 
     def test_run_selfplay_update_loop_rejects_missing_historical_dir_on_resume(
         self,
@@ -418,6 +870,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 _write_chunk_file(
@@ -425,6 +878,7 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -475,6 +929,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 _write_chunk_file(
@@ -485,6 +940,7 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -531,6 +987,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 _write_chunk_file(
@@ -538,6 +995,7 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -589,6 +1047,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 _write_chunk_file(
@@ -596,6 +1055,7 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -632,6 +1092,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 _write_chunk_file(
@@ -639,6 +1100,7 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch.object(
                     NativeSelfPlayLauncher,
                     "run_selfplay",
@@ -676,6 +1138,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def failing_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 nonlocal launcher_calls
@@ -686,6 +1149,7 @@ class OrchestratorTest(unittest.TestCase):
                 raise RuntimeError("injected self-play failure")
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -709,11 +1173,12 @@ class OrchestratorTest(unittest.TestCase):
 
             iteration_dir = run_root / "selfplay" / "iter_000001"
             self.assertFalse(iteration_dir.exists())
-            self.assertFalse(_partial_iteration_dir(iteration_dir).exists())
+            self.assertFalse(partial_path(iteration_dir).exists())
             self.assertEqual(launcher_calls, 1)
 
             def successful_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 nonlocal launcher_calls
@@ -723,6 +1188,7 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -755,6 +1221,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 nonlocal launcher_calls
@@ -773,6 +1240,7 @@ class OrchestratorTest(unittest.TestCase):
                     raise RuntimeError("injected learner failure")
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     FailingLearnerRunner,
@@ -796,10 +1264,11 @@ class OrchestratorTest(unittest.TestCase):
 
             iteration_dir = run_root / "selfplay" / "iter_000001"
             self.assertTrue(iteration_dir.is_dir())
-            self.assertFalse(_partial_iteration_dir(iteration_dir).exists())
+            self.assertFalse(partial_path(iteration_dir).exists())
             self.assertEqual(launcher_calls, 1)
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     _FakeLearnerRunner,
@@ -835,6 +1304,7 @@ class OrchestratorTest(unittest.TestCase):
 
             def fake_run_selfplay(
                 launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
                 output_dir: pathlib.Path,
             ) -> None:
                 iteration = int(output_dir.name.removesuffix(".partial").split("_")[1])
@@ -849,10 +1319,11 @@ class OrchestratorTest(unittest.TestCase):
                         [_alternate_raw_game()],
                     )
 
-            with mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
+            with (
+                mock.patch.object(
+                    NativeSelfPlayLauncher, "run_selfplay", new=fake_run_selfplay
+                ),
+                self._patched_aoti(),
             ):
                 first_reports = run_selfplay_update_loop(
                     run_root=run_root,
@@ -881,6 +1352,7 @@ class OrchestratorTest(unittest.TestCase):
                     )
 
             with (
+                self._patched_aoti(),
                 mock.patch(
                     "codfish.orchestrator.LearnerRunner",
                     RecordingLearnerRunner,
@@ -907,6 +1379,7 @@ class OrchestratorTest(unittest.TestCase):
             first_checkpoint.replay_sampler_rng_state,
         )
 
+    @unittest.skipUnless(torch.cuda.is_available(), "AOTI self-play requires CUDA")
     def test_orchestrator_cli_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             run_root = pathlib.Path(tmp_dir) / "run"
@@ -919,6 +1392,8 @@ class OrchestratorTest(unittest.TestCase):
                     os.fspath(run_root),
                     "--num-iterations",
                     "1",
+                    "--device",
+                    "cuda",
                     "--learning-rate",
                     "0.01",
                     "--optimizer-momentum",
@@ -952,6 +1427,12 @@ class OrchestratorTest(unittest.TestCase):
             )
 
             self.assertTrue((run_root / "learner" / "latest.pt").exists())
+            self.assertTrue(
+                (run_root / "artifacts" / "iter_000000" / AOTI_MANIFEST_FILE).exists()
+            )
+            self.assertTrue(
+                (run_root / "artifacts" / "iter_000001" / AOTI_MANIFEST_FILE).exists()
+            )
             self.assertTrue(
                 sorted((run_root / "selfplay" / "iter_000001").glob("*.bin"))
             )

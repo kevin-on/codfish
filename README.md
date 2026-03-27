@@ -10,8 +10,9 @@ Requirements:
 - A C++23 compiler
 - `clang-format` for C/C++ formatting checks
 - GoogleTest available to CMake
-- `uv` for the managed Python environment when building learner bindings
-- Python 3 development headers only when `CODFISH_BUILD_LEARNER_PYTHON=ON`
+- `uv` for the managed Python environment
+- Python 3 development headers
+- `torch` installed in the Python environment used for the build
 
 On macOS with Homebrew, GoogleTest can be installed with:
 
@@ -30,71 +31,62 @@ Create the default environment:
 uv sync
 ```
 
-This installs the Python dependencies used by the learner and orchestrator,
-including `numpy`, `torch`, and `wandb`.
+This installs the Python dependencies used by the learner, orchestrator, and
+AOTI export path, including `numpy`, `torch`, and `wandb`.
 
 ## Configure
 
-Use explicit build directories so the `PEXT` mode is always clear from the path.
+Use `build/` as the canonical local development build directory. Re-run CMake
+into the same directory when switching variants so `build/compile_commands.json`
+stays aligned with clangd and Cursor.
 
-- Fallback move generator (`NO_PEXT`), no learner Python bindings:
+Point CMake at the same Python environment you use for `torch` and derive
+`CMAKE_PREFIX_PATH` from that interpreter.
+
+- Fallback move generator (`NO_PEXT`):
 
 ```bash
-cmake -S . -B build/no-pext -DCODFISH_ENABLE_PEXT=OFF
-```
+PYTHON_BIN="$PWD/.venv/bin/python"
+TORCH_CMAKE_DIR="$("$PYTHON_BIN" -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).resolve().parent / "share/cmake")')"
 
-- Fallback move generator (`NO_PEXT`) with learner Python bindings:
-
-```bash
-cmake -S . -B build/no-pext-python \
+cmake -S . -B build \
   -DCODFISH_ENABLE_PEXT=OFF \
-  -DCODFISH_BUILD_LEARNER_PYTHON=ON \
-  -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+  -DPython3_EXECUTABLE="$PYTHON_BIN" \
+  -DCMAKE_PREFIX_PATH="$TORCH_CMAKE_DIR"
 ```
 
-- BMI2/PEXT runtime on x86_64 with no learner Python bindings:
+- BMI2/PEXT runtime on x86_64:
 
 ```bash
-cmake -S . -B build/pext -DCODFISH_ENABLE_PEXT=ON
-```
+PYTHON_BIN="$PWD/.venv/bin/python"
+TORCH_CMAKE_DIR="$("$PYTHON_BIN" -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).resolve().parent / "share/cmake")')"
 
-- BMI2/PEXT runtime on x86_64 with learner Python bindings:
-
-```bash
-cmake -S . -B build/pext-python \
+cmake -S . -B build \
   -DCODFISH_ENABLE_PEXT=ON \
-  -DCODFISH_BUILD_LEARNER_PYTHON=ON \
-  -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+  -DPython3_EXECUTABLE="$PYTHON_BIN" \
+  -DCMAKE_PREFIX_PATH="$TORCH_CMAKE_DIR"
 ```
 
 Build after configuring:
 
 ```bash
-cmake --build build/no-pext
+cmake --build build
 ```
 
 Run the test suite:
 
 ```bash
-ctest --test-dir build/no-pext --output-on-failure
+ctest --test-dir build --output-on-failure
 ```
 
 For faster local iteration, skip the smoke test:
 
 ```bash
-ctest --test-dir build/no-pext -LE smoke --output-on-failure
+ctest --test-dir build -LE smoke --output-on-failure
 ```
 
-If you built learner Python bindings, run the same commands against the matching
-`*-python` build directory instead, for example:
-
-```bash
-cmake --build build/no-pext-python
-ctest --test-dir build/no-pext-python --output-on-failure
-```
-
-The configure step writes `compile_commands.json` into the selected build
-directory for clangd and other editor tooling.
+The configure step writes `compile_commands.json` into `build/` for clangd and
+other editor tooling.
 
 ## Formatting
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from .. import _run_layout
 from ._api import EncodedGameSamples
 from ._checkpoint import (
     atomic_torch_save,
@@ -147,8 +148,8 @@ class Trainer:
         *,
         replay_sampler_rng_state: dict[str, object] | None = None,
     ) -> Path:
-        latest_path = self.checkpoint_dir / "latest.pt"
-        previous_path = self.checkpoint_dir / "previous.pt"
+        latest_path = _run_layout.latest_checkpoint_path(self.checkpoint_dir)
+        previous_path = _run_layout.previous_checkpoint_path(self.checkpoint_dir)
         payload = build_training_checkpoint_payload(
             model_state_dict=self.model.state_dict(),
             optimizer_state_dict=self.optimizer.state_dict(),
@@ -170,11 +171,12 @@ class Trainer:
         return latest_path
 
     def save_snapshot(self, iteration: int) -> Path:
-        snapshots_dir = self.checkpoint_dir / "snapshots"
-        snapshots_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_path = snapshots_dir / (
-            f"iter_{iteration:06d}_step_{self.global_learner_step:09d}.pt"
+        snapshot_path = _run_layout.snapshot_path(
+            self.checkpoint_dir,
+            iteration=iteration,
+            global_step=self.global_learner_step,
         )
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         payload = build_snapshot_payload(
             model_state_dict=self.model.state_dict(),
             global_learner_step=self.global_learner_step,

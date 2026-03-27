@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 
+#include "actor/mcts/aoti_selfplay.h"
 #include "actor/mcts/mock_selfplay.h"
 #include "learner/raw_types.h"
 #include "learner/sample_facade.h"
@@ -153,6 +154,34 @@ NB_MODULE(_native, m) {
   });
 
   m.def("get_model_io_shape", []() { return ToPythonModelIOShape(); });
+
+  m.def(
+      "run_aoti_selfplay",
+      [](const std::string& model_package_path, int input_channels,
+         int policy_size, const std::string& raw_output_dir, int num_workers,
+         int num_games, uint64_t raw_chunk_max_bytes, int num_action,
+         int num_simulation, float c_puct, float c_visit, float c_scale) {
+        engine::RunAotiSelfPlay(engine::AotiSelfPlayOptions{
+            .model_package_path = std::filesystem::path(model_package_path),
+            .input_channels = input_channels,
+            .policy_size = policy_size,
+            .raw_output_dir = std::filesystem::path(raw_output_dir),
+            .num_workers = num_workers,
+            .num_games = num_games,
+            .raw_chunk_max_bytes = raw_chunk_max_bytes,
+            .num_action = num_action,
+            .num_simulation = num_simulation,
+            .c_puct = c_puct,
+            .c_visit = c_visit,
+            .c_scale = c_scale,
+        });
+      },
+      nb::arg("model_package_path"), nb::arg("input_channels"),
+      nb::arg("policy_size"), nb::arg("raw_output_dir"), nb::arg("num_workers"),
+      nb::arg("num_games"), nb::arg("raw_chunk_max_bytes"),
+      nb::arg("num_action"), nb::arg("num_simulation"), nb::arg("c_puct"),
+      nb::arg("c_visit"), nb::arg("c_scale"),
+      nb::call_guard<nb::gil_scoped_release>());
 
   m.def(
       "run_mock_selfplay",

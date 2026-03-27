@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from .. import _run_layout
 from ._api import get_model_io_shape, read_raw_chunk_file
 from ._replay import ReplayBuffer, ReplayBufferConfig
 from ._trainer import Trainer
@@ -48,7 +48,7 @@ class LearnerRunner:
         self._wandb_session: WandbSession | None = None
 
         if config.resume:
-            latest_path = Path(config.checkpoint_dir) / "latest.pt"
+            latest_path = _run_layout.latest_checkpoint_path(config.checkpoint_dir)
             if not latest_path.exists():
                 raise FileNotFoundError(
                     f"resume requested but checkpoint does not exist: {latest_path}"

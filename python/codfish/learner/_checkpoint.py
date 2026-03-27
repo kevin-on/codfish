@@ -8,6 +8,14 @@ from pathlib import Path
 
 import torch
 
+from .._dict_validation import (
+    optional_require_dict,
+    optional_require_str,
+    require_dict,
+    require_int,
+    require_real,
+    require_str,
+)
 from ._types import TrainerConfig
 
 CHECKPOINT_FORMAT_VERSION = 1
@@ -119,28 +127,28 @@ def _load_payload(
 
 def _parse_training_checkpoint(payload: dict[str, object]) -> TrainingCheckpoint:
     return TrainingCheckpoint(
-        format_version=_require_int(payload, "format_version", "training checkpoint"),
-        model_state_dict=_require_dict(
+        format_version=require_int(payload, "format_version", "training checkpoint"),
+        model_state_dict=require_dict(
             payload, "model_state_dict", "training checkpoint"
         ),
-        optimizer_state_dict=_require_dict(
+        optimizer_state_dict=require_dict(
             payload, "optimizer_state_dict", "training checkpoint"
         ),
-        global_learner_step=_require_int(
+        global_learner_step=require_int(
             payload, "global_learner_step", "training checkpoint"
         ),
-        iteration=_require_int(payload, "iteration", "training checkpoint"),
-        model_name=_require_str(payload, "model_name", "training checkpoint"),
-        model_config=_require_dict(payload, "model_config", "training checkpoint"),
+        iteration=require_int(payload, "iteration", "training checkpoint"),
+        model_name=require_str(payload, "model_name", "training checkpoint"),
+        model_config=require_dict(payload, "model_config", "training checkpoint"),
         trainer_config=_parse_trainer_config(
-            _require_dict(payload, "trainer_config", "training checkpoint")
+            require_dict(payload, "trainer_config", "training checkpoint")
         ),
-        wandb_run_id=_optional_require_str(
+        wandb_run_id=optional_require_str(
             payload,
             "wandb_run_id",
             "training checkpoint",
         ),
-        replay_sampler_rng_state=_optional_require_dict(
+        replay_sampler_rng_state=optional_require_dict(
             payload,
             "replay_sampler_rng_state",
             "training checkpoint",
@@ -150,25 +158,25 @@ def _parse_training_checkpoint(payload: dict[str, object]) -> TrainingCheckpoint
 
 def _parse_snapshot_checkpoint(payload: dict[str, object]) -> SnapshotCheckpoint:
     return SnapshotCheckpoint(
-        format_version=_require_int(payload, "format_version", "snapshot"),
-        model_state_dict=_require_dict(payload, "model_state_dict", "snapshot"),
-        global_learner_step=_require_int(payload, "global_learner_step", "snapshot"),
-        iteration=_require_int(payload, "iteration", "snapshot"),
-        model_name=_require_str(payload, "model_name", "snapshot"),
-        model_config=_require_dict(payload, "model_config", "snapshot"),
+        format_version=require_int(payload, "format_version", "snapshot"),
+        model_state_dict=require_dict(payload, "model_state_dict", "snapshot"),
+        global_learner_step=require_int(payload, "global_learner_step", "snapshot"),
+        iteration=require_int(payload, "iteration", "snapshot"),
+        model_name=require_str(payload, "model_name", "snapshot"),
+        model_config=require_dict(payload, "model_config", "snapshot"),
     )
 
 
 def _parse_trainer_config(payload: dict[str, object]) -> TrainerConfig:
     return TrainerConfig(
-        learning_rate=_require_real(payload, "learning_rate", "trainer_config"),
-        optimizer_momentum=_require_real(
+        learning_rate=require_real(payload, "learning_rate", "trainer_config"),
+        optimizer_momentum=require_real(
             payload, "optimizer_momentum", "trainer_config"
         ),
-        optimizer_weight_decay=_require_real(
+        optimizer_weight_decay=require_real(
             payload, "optimizer_weight_decay", "trainer_config"
         ),
-        value_loss_weight=_require_real(payload, "value_loss_weight", "trainer_config"),
+        value_loss_weight=require_real(payload, "value_loss_weight", "trainer_config"),
     )
 
 
@@ -179,65 +187,6 @@ def _trainer_config_payload(trainer_config: TrainerConfig) -> dict[str, object]:
         "optimizer_weight_decay": trainer_config.optimizer_weight_decay,
         "value_loss_weight": trainer_config.value_loss_weight,
     }
-
-
-def _require_dict(
-    payload: dict[str, object], key: str, context: str
-) -> dict[str, object]:
-    value = _require_key(payload, key, context)
-    if not isinstance(value, dict):
-        raise ValueError(f"{context} field {key} must be a dict")
-    return value
-
-
-def _optional_require_dict(
-    payload: dict[str, object], key: str, context: str
-) -> dict[str, object] | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError(f"{context} field {key} must be a dict or None")
-    return value
-
-
-def _require_int(payload: dict[str, object], key: str, context: str) -> int:
-    value = _require_key(payload, key, context)
-    if not isinstance(value, int):
-        raise ValueError(f"{context} field {key} must be an int")
-    return value
-
-
-def _require_str(payload: dict[str, object], key: str, context: str) -> str:
-    value = _require_key(payload, key, context)
-    if not isinstance(value, str):
-        raise ValueError(f"{context} field {key} must be a str")
-    return value
-
-
-def _optional_require_str(
-    payload: dict[str, object], key: str, context: str
-) -> str | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{context} field {key} must be a str or None")
-    return value
-
-
-def _require_real(payload: dict[str, object], key: str, context: str) -> float:
-    value = _require_key(payload, key, context)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{context} field {key} must be a real number")
-    return float(value)
-
-
-def _require_key(payload: dict[str, object], key: str, context: str) -> object:
-    try:
-        return payload[key]
-    except KeyError as exc:
-        raise ValueError(f"{context} is missing field {key}") from exc
 
 
 def atomic_torch_save(
