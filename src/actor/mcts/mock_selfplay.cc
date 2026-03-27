@@ -135,8 +135,7 @@ void RunMockSelfPlay(const MockSelfPlayOptions& options) {
       },
       std::make_unique<GumbelTaskFactory>(search_config),
       backend,
-      &encoder,
-      ModelManifest{});
+      &encoder);
 
   coordinator.RunGames(
       RunGamesOptions{

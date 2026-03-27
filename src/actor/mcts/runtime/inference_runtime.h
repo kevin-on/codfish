@@ -9,7 +9,6 @@
 #include "actor/mcts/runtime/task_types.h"
 #include "engine/encoder.h"
 #include "engine/infer/inference_backend.h"
-#include "engine/infer/model_manifest.h"
 
 namespace engine {
 
@@ -27,7 +26,7 @@ class InferenceRuntime {
  public:
   InferenceRuntime(InferenceChannels channels,
                    std::shared_ptr<InferenceBackend> backend,
-                   const FeatureEncoder* encoder, ModelManifest manifest,
+                   const FeatureEncoder* encoder,
                    InferenceRuntimeOptions options);
   ~InferenceRuntime();
 
@@ -43,7 +42,6 @@ class InferenceRuntime {
   InferenceChannels channels_;
   std::shared_ptr<InferenceBackend> backend_;
   const FeatureEncoder* encoder_ = nullptr;
-  ModelManifest manifest_;
   InferenceRuntimeOptions options_;
   bool started_ = false;
   bool stopped_ = false;

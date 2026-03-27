@@ -2,17 +2,11 @@
 
 #include <algorithm>
 
+#include "lc0/move_index.h"
+
 namespace engine {
 
-Status MockBackend::Load(const ModelManifest& manifest) {
-  if (manifest.policy_size <= 0) {
-    return Status::Error("invalid policy size");
-  }
-  if (manifest.input_channels <= 0) {
-    return Status::Error("invalid input channels");
-  }
-
-  policy_size_ = manifest.policy_size;
+Status MockBackend::Load() {
   loaded_ = true;
   return Status::Ok();
 }
@@ -28,10 +22,9 @@ Status MockBackend::Run(const InferenceBatch& batch, InferenceOutputs* out) {
   if (batch.batch_size > 0 && batch.planes == nullptr) {
     return Status::Error("planes buffer is null");
   }
-  if (policy_size_ <= 0) return Status::Error("invalid policy size");
 
   const std::size_t batch_size = static_cast<std::size_t>(batch.batch_size);
-  const std::size_t policy_size = static_cast<std::size_t>(policy_size_);
+  const std::size_t policy_size = static_cast<std::size_t>(lczero::kPolicySize);
 
   out->policy_logits.resize(batch_size * policy_size);
   out->wdl_probs.resize(batch_size * 3);

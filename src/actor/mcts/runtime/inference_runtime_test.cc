@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "lc0/move_index.h"
+
 namespace engine {
 namespace {
 
@@ -19,15 +21,14 @@ class TaggedGameTask final : public GameTask {
 
 class RecordingBackend final : public InferenceBackend {
  public:
-  Status Load(const ModelManifest& manifest) override {
-    policy_size_ = manifest.policy_size;
+  Status Load() override {
     ++load_calls_;
     return Status::Ok();
   }
 
   Status Run(const InferenceBatch& batch, InferenceOutputs* out) override {
     if (out == nullptr) return Status::Error("output buffer is null");
-    if (policy_size_ <= 0) return Status::Error("backend not loaded");
+    if (load_calls_ <= 0) return Status::Error("backend not loaded");
 
     batch_sizes_.push_back(batch.batch_size);
     out->policy_logits.clear();
@@ -35,7 +36,8 @@ class RecordingBackend final : public InferenceBackend {
 
     for (int batch_idx = 0; batch_idx < batch.batch_size; ++batch_idx) {
       const int item_id = next_item_id_++;
-      for (int policy_idx = 0; policy_idx < policy_size_; ++policy_idx) {
+      for (int policy_idx = 0; policy_idx < lczero::kPolicySize;
+           ++policy_idx) {
         out->policy_logits.push_back(
             static_cast<float>(item_id * 10 + policy_idx));
       }
@@ -53,7 +55,6 @@ class RecordingBackend final : public InferenceBackend {
   const std::vector<int>& batch_sizes() const { return batch_sizes_; }
 
  private:
-  int policy_size_ = 0;
   int load_calls_ = 0;
   int next_item_id_ = 0;
   std::vector<int> batch_sizes_;
@@ -87,14 +88,18 @@ std::unique_ptr<TaggedGameTask> PopReadyTask(
       static_cast<TaggedGameTask*>(task->release()));
 }
 
-void ExpectItemPayload(const EvalResponseItem& item, int expected_item_id,
-                       int policy_size) {
-  ASSERT_EQ(item.policy_logits.size(), static_cast<std::size_t>(policy_size));
+void ExpectItemPayload(const EvalResponseItem& item, int expected_item_id) {
+  ASSERT_EQ(item.policy_logits.size(),
+            static_cast<std::size_t>(lczero::kPolicySize));
   ASSERT_EQ(item.wdl_probs.size(), 3u);
-  for (int policy_idx = 0; policy_idx < policy_size; ++policy_idx) {
-    EXPECT_FLOAT_EQ(item.policy_logits[policy_idx],
-                    static_cast<float>(expected_item_id * 10 + policy_idx));
-  }
+  EXPECT_FLOAT_EQ(item.policy_logits[0], static_cast<float>(expected_item_id * 10));
+  EXPECT_FLOAT_EQ(item.policy_logits[1],
+                  static_cast<float>(expected_item_id * 10 + 1));
+  EXPECT_FLOAT_EQ(item.policy_logits[2],
+                  static_cast<float>(expected_item_id * 10 + 2));
+  EXPECT_FLOAT_EQ(item.policy_logits.back(),
+                  static_cast<float>(expected_item_id * 10 +
+                                     (lczero::kPolicySize - 1)));
   EXPECT_FLOAT_EQ(item.wdl_probs[0], static_cast<float>(expected_item_id));
   EXPECT_FLOAT_EQ(item.wdl_probs[1],
                   static_cast<float>(expected_item_id + 100));
@@ -113,7 +118,7 @@ TEST(InferenceRuntime, BatchesAcrossMultipleRequestsAndRequeuesReadyTasks) {
           .request_queue = &request_queue,
           .ready_queue = &ready_queue,
       },
-      backend, &encoder, ModelManifest{.policy_size = 4},
+      backend, &encoder,
       InferenceRuntimeOptions{
           .max_batch_size = 8,
           .flush_timeout = 5ms,
@@ -138,12 +143,9 @@ TEST(InferenceRuntime, BatchesAcrossMultipleRequestsAndRequeuesReadyTasks) {
   EXPECT_EQ(second->task_id, 2);
   ASSERT_EQ(first->response->items.size(), 1u);
   ASSERT_EQ(second->response->items.size(), 2u);
-  ExpectItemPayload(first->response->items[0], /*expected_item_id=*/0,
-                    /*policy_size=*/4);
-  ExpectItemPayload(second->response->items[0], /*expected_item_id=*/1,
-                    /*policy_size=*/4);
-  ExpectItemPayload(second->response->items[1], /*expected_item_id=*/2,
-                    /*policy_size=*/4);
+  ExpectItemPayload(first->response->items[0], /*expected_item_id=*/0);
+  ExpectItemPayload(second->response->items[0], /*expected_item_id=*/1);
+  ExpectItemPayload(second->response->items[1], /*expected_item_id=*/2);
   EXPECT_EQ(backend->load_calls(), 1);
   EXPECT_EQ(backend->batch_sizes(), std::vector<int>({3}));
 }
@@ -159,7 +161,7 @@ TEST(InferenceRuntime, LargeRequestSplitsAcrossMultipleBackendRuns) {
           .request_queue = &request_queue,
           .ready_queue = &ready_queue,
       },
-      backend, &encoder, ModelManifest{.policy_size = 3},
+      backend, &encoder,
       InferenceRuntimeOptions{
           .max_batch_size = 2,
           .flush_timeout = 0ms,
@@ -178,7 +180,7 @@ TEST(InferenceRuntime, LargeRequestSplitsAcrossMultipleBackendRuns) {
   ASSERT_EQ(task->response->items.size(), 5u);
   for (int item_id = 0; item_id < 5; ++item_id) {
     ExpectItemPayload(task->response->items[static_cast<std::size_t>(item_id)],
-                      item_id, /*policy_size=*/3);
+                      item_id);
   }
   EXPECT_EQ(backend->batch_sizes(), std::vector<int>({2, 2, 1}));
 }
@@ -194,7 +196,7 @@ TEST(InferenceRuntime, SplitRequestCanShareLaterBatchWithNextRequest) {
           .request_queue = &request_queue,
           .ready_queue = &ready_queue,
       },
-      backend, &encoder, ModelManifest{.policy_size = 2},
+      backend, &encoder,
       InferenceRuntimeOptions{
           .max_batch_size = 4,
           .flush_timeout = 5ms,
@@ -219,12 +221,10 @@ TEST(InferenceRuntime, SplitRequestCanShareLaterBatchWithNextRequest) {
   ASSERT_EQ(second->response->items.size(), 2u);
   for (int item_id = 0; item_id < 5; ++item_id) {
     ExpectItemPayload(first->response->items[static_cast<std::size_t>(item_id)],
-                      item_id, /*policy_size=*/2);
+                      item_id);
   }
-  ExpectItemPayload(second->response->items[0], /*expected_item_id=*/5,
-                    /*policy_size=*/2);
-  ExpectItemPayload(second->response->items[1], /*expected_item_id=*/6,
-                    /*policy_size=*/2);
+  ExpectItemPayload(second->response->items[0], /*expected_item_id=*/5);
+  ExpectItemPayload(second->response->items[1], /*expected_item_id=*/6);
   EXPECT_EQ(backend->batch_sizes(), std::vector<int>({4, 3}));
 }
 

@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "lc0/move_index.h"
+
 namespace engine {
 namespace {
 
@@ -114,19 +116,15 @@ void ScatterBatch(const std::vector<RouteEntry>& route,
 InferenceRuntime::InferenceRuntime(InferenceChannels channels,
                                    std::shared_ptr<InferenceBackend> backend,
                                    const FeatureEncoder* encoder,
-                                   ModelManifest manifest,
                                    InferenceRuntimeOptions options)
     : channels_(channels),
       backend_(std::move(backend)),
       encoder_(encoder),
-      manifest_(manifest),
       options_(options) {
   assert(channels_.request_queue != nullptr);
   assert(channels_.ready_queue != nullptr);
   assert(backend_ != nullptr);
   assert(encoder_ != nullptr);
-  assert(manifest_.input_channels == kInputPlanes);
-  assert(manifest_.policy_size > 0);
   assert(options_.max_batch_size > 0);
   assert(options_.flush_timeout.count() >= 0);
 }
@@ -138,7 +136,7 @@ void InferenceRuntime::Start() {
   if (started_) return;
   if (stopped_) return;
 
-  const Status status = backend_->Load(manifest_);
+  const Status status = backend_->Load();
   assert(status.ok());
 
   started_ = true;
@@ -205,7 +203,7 @@ void InferenceRuntime::RunLoop() {
         &outputs);
     assert(status.ok());
 
-    ScatterBatch(route, outputs, manifest_.policy_size);
+    ScatterBatch(route, outputs, lczero::kPolicySize);
 
     while (!inflight.empty() && inflight.front().next_item ==
                                     inflight.front().request.items.size()) {

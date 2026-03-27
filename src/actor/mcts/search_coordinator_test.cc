@@ -212,7 +212,7 @@ TEST(SearchCoordinator, RunGamesSeedsGamesAndRunsTerminalTasks) {
               },
       },
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
-      backend, &encoder, ModelManifest{});
+      backend, &encoder);
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 3,
@@ -239,7 +239,7 @@ TEST(SearchCoordinator, RunGamesWiresInferencePathForYieldingTasks) {
               },
       },
       std::make_unique<CountingTaskFactory<YieldOnceTerminalSearcher>>(&probe),
-      backend, &encoder, ModelManifest{});
+      backend, &encoder);
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 2,
@@ -266,7 +266,7 @@ TEST(SearchCoordinator, RunGamesAllowsZeroGames) {
               },
       },
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
-      backend, &encoder, ModelManifest{});
+      backend, &encoder);
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 0,
@@ -293,7 +293,7 @@ TEST(SearchCoordinator, RunGamesRejectsSecondCallAtRuntime) {
               },
       },
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
-      backend, &encoder, ModelManifest{});
+      backend, &encoder);
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 1,
@@ -321,7 +321,7 @@ TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
               },
       },
       std::make_unique<ThrowOnSecondCreateTaskFactory>(&probe),
-      backend, &encoder, ModelManifest{});
+      backend, &encoder);
 
   EXPECT_THROW(
       coordinator.RunGames(
@@ -350,7 +350,7 @@ TEST(SearchCoordinator, RunGamesWithRawOutputPersistsCompletedGame) {
       },
       std::make_unique<CountingTaskFactory<NonTerminalThenTerminalSearcher>>(
           &probe),
-      backend, &encoder, ModelManifest{});
+      backend, &encoder);
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 1,

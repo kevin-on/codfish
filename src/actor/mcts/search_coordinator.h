@@ -15,7 +15,6 @@
 #include "actor/mcts/runtime/worker_runtime.h"
 #include "engine/encoder.h"
 #include "engine/infer/inference_backend.h"
-#include "engine/infer/model_manifest.h"
 
 namespace engine {
 
@@ -41,7 +40,7 @@ class SearchCoordinator {
   SearchCoordinator(SearchCoordinatorConfig config,
                     std::unique_ptr<GameTaskFactory> task_factory,
                     std::shared_ptr<InferenceBackend> backend,
-                    const FeatureEncoder* encoder, ModelManifest manifest);
+                    const FeatureEncoder* encoder);
   ~SearchCoordinator();
 
   SearchCoordinator(const SearchCoordinator&) = delete;
@@ -65,7 +64,6 @@ class SearchCoordinator {
   std::unique_ptr<GameTaskFactory> task_factory_;
   std::shared_ptr<InferenceBackend> backend_;
   const FeatureEncoder* encoder_ = nullptr;
-  ModelManifest manifest_;
 
   WorkerRuntime worker_runtime_;
   InferenceRuntime inference_runtime_;

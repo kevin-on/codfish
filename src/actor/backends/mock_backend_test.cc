@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "lc0/move_index.h"
+
 namespace engine {
 namespace {
 
@@ -22,32 +24,14 @@ TEST(MockBackend, RunBeforeLoadReturnsError) {
   EXPECT_TRUE(out.wdl_probs.empty());
 }
 
-TEST(MockBackend, LoadRejectsInvalidPolicySize) {
+TEST(MockBackend, LoadSucceeds) {
   MockBackend backend;
-  ModelManifest manifest;
-  manifest.policy_size = 0;
-
-  const Status status = backend.Load(manifest);
-
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.message(), "invalid policy size");
-}
-
-TEST(MockBackend, LoadRejectsInvalidInputChannels) {
-  MockBackend backend;
-  ModelManifest manifest;
-  manifest.input_channels = 0;
-
-  const Status status = backend.Load(manifest);
-
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.message(), "invalid input channels");
+  EXPECT_TRUE(backend.Load().ok());
 }
 
 TEST(MockBackend, RunWithNullOutReturnsError) {
   MockBackend backend;
-  ModelManifest manifest;
-  ASSERT_TRUE(backend.Load(manifest).ok());
+  ASSERT_TRUE(backend.Load().ok());
 
   InferenceBatch batch;
   uint8_t dummy_planes[1] = {0};
@@ -62,8 +46,7 @@ TEST(MockBackend, RunWithNullOutReturnsError) {
 
 TEST(MockBackend, RunWithNegativeBatchReturnsError) {
   MockBackend backend;
-  ModelManifest manifest;
-  ASSERT_TRUE(backend.Load(manifest).ok());
+  ASSERT_TRUE(backend.Load().ok());
 
   InferenceBatch batch;
   batch.planes = nullptr;
@@ -82,8 +65,7 @@ TEST(MockBackend, RunWithNegativeBatchReturnsError) {
 
 TEST(MockBackend, RunWithNullPlanesAndPositiveBatchReturnsError) {
   MockBackend backend;
-  ModelManifest manifest;
-  ASSERT_TRUE(backend.Load(manifest).ok());
+  ASSERT_TRUE(backend.Load().ok());
 
   InferenceBatch batch;
   batch.planes = nullptr;
@@ -98,9 +80,7 @@ TEST(MockBackend, RunWithNullPlanesAndPositiveBatchReturnsError) {
 
 TEST(MockBackend, LoadAndRunProducesExpectedShapes) {
   MockBackend backend;
-  ModelManifest manifest;
-  manifest.policy_size = 7;
-  ASSERT_TRUE(backend.Load(manifest).ok());
+  ASSERT_TRUE(backend.Load().ok());
 
   uint8_t dummy_planes[1] = {0};
   InferenceBatch batch;
@@ -111,7 +91,8 @@ TEST(MockBackend, LoadAndRunProducesExpectedShapes) {
   const Status status = backend.Run(batch, &out);
 
   ASSERT_TRUE(status.ok());
-  EXPECT_EQ(out.policy_logits.size(), 28u);
+  EXPECT_EQ(out.policy_logits.size(),
+            4u * static_cast<std::size_t>(lczero::kPolicySize));
   EXPECT_EQ(out.wdl_probs.size(), 12u);
 }
 

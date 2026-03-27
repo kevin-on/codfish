@@ -9,13 +9,11 @@ namespace engine {
 SearchCoordinator::SearchCoordinator(
     SearchCoordinatorConfig config,
     std::unique_ptr<GameTaskFactory> task_factory,
-    std::shared_ptr<InferenceBackend> backend, const FeatureEncoder* encoder,
-    ModelManifest manifest)
+    std::shared_ptr<InferenceBackend> backend, const FeatureEncoder* encoder)
     : config_(config),
       task_factory_(std::move(task_factory)),
       backend_(std::move(backend)),
       encoder_(encoder),
-      manifest_(manifest),
       worker_runtime_(config_.num_workers,
                       WorkerChannels{
                           .ready_queue = &ready_queue_,
@@ -27,7 +25,7 @@ SearchCoordinator::SearchCoordinator(
               .request_queue = &request_queue_,
               .ready_queue = &ready_queue_,
           },
-          backend_, encoder_, manifest_, config_.inference),
+          backend_, encoder_, config_.inference),
       game_runner_(GameRunnerChannels{
           .completion_queue = &completion_queue_,
           .ready_queue = &ready_queue_,

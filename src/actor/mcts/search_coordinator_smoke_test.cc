@@ -91,8 +91,7 @@ TEST(SearchCoordinatorSmoke, GumbelMctsWithMockBackendCompletesGameAndWritesChun
                   .flush_timeout = 0ms,
               },
       },
-      std::make_unique<GumbelTaskFactory>(kSearchConfig), backend, &encoder,
-      ModelManifest{});
+      std::make_unique<GumbelTaskFactory>(kSearchConfig), backend, &encoder);
 
   const std::filesystem::path chunk_path =
       temp_dir.path / raw_chunk_format::ChunkFileName(1);
