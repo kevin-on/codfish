@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -13,6 +14,7 @@ struct GameRunnerChannels {
   ThreadSafeQueue<CompletedSearch>* completion_queue = nullptr;
   ThreadSafeQueue<std::unique_ptr<GameTask>>* ready_queue = nullptr;
   ThreadSafeQueue<CompletedGame>* completed_game_queue = nullptr;
+  std::function<void()> on_completed_game;
 };
 
 class GameRunner {

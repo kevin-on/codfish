@@ -1,21 +1,23 @@
 #include "actor/mcts/search_coordinator.h"
 
 #include <cassert>
+#include <chrono>
+#include <stdexcept>
 #include <utility>
 
 namespace engine {
 
 SearchCoordinator::SearchCoordinator(
-    SearchCoordinatorOptions options,
+    SearchCoordinatorConfig config,
     std::unique_ptr<GameTaskFactory> task_factory,
     std::shared_ptr<InferenceBackend> backend, const FeatureEncoder* encoder,
     ModelManifest manifest)
-    : options_(options),
+    : config_(config),
       task_factory_(std::move(task_factory)),
       backend_(std::move(backend)),
       encoder_(encoder),
       manifest_(manifest),
-      worker_runtime_(options_.num_workers,
+      worker_runtime_(config_.num_workers,
                       WorkerChannels{
                           .ready_queue = &ready_queue_,
                           .request_queue = &request_queue_,
@@ -26,48 +28,72 @@ SearchCoordinator::SearchCoordinator(
               .request_queue = &request_queue_,
               .ready_queue = &ready_queue_,
           },
-          backend_, encoder_, manifest_, options_.inference),
+          backend_, encoder_, manifest_, config_.inference),
       game_runner_(GameRunnerChannels{
           .completion_queue = &completion_queue_,
           .ready_queue = &ready_queue_,
           .completed_game_queue = &completed_game_queue_,
+          .on_completed_game = [this] { OnCompletedGame(); },
       }) {
-  assert(options_.num_workers > 0);
-  assert(options_.num_games >= 0);
+  assert(config_.num_workers > 0);
   assert(task_factory_ != nullptr);
   assert(backend_ != nullptr);
   assert(encoder_ != nullptr);
+}
 
-  if (options_.raw_output_dir.has_value()) {
+SearchCoordinator::~SearchCoordinator() { StopRun(); }
+
+bool SearchCoordinator::RunGames(const RunGamesOptions& options) {
+  bool cleanup_needed = true;
+  try {
+    StartRun(options);
+    const bool completed = WaitForCompletedGames(options);
+    StopRun();
+    cleanup_needed = false;
+    return completed;
+  } catch (...) {
+    if (cleanup_needed) {
+      StopRun();
+    }
+    throw;
+  }
+}
+
+void SearchCoordinator::StartRun(const RunGamesOptions& options) {
+  assert(options.num_games >= 0);
+  assert(options.raw_chunk_max_bytes > 0);
+  assert(options.timeout >= std::chrono::steady_clock::duration::zero());
+
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    if (started_ || stopped_) {
+      throw std::logic_error(
+          "SearchCoordinator::RunGames() cannot be called more than once");
+    }
+    completed_games_ = 0;
+    started_ = true;
+  }
+
+  if (options.raw_output_dir.has_value()) {
     chunk_writer_runtime_ = std::make_unique<ChunkWriterRuntime>(
         ChunkWriterChannels{
             .completed_game_queue = &completed_game_queue_,
         },
         ChunkWriterOptions{
-            .output_dir = *options_.raw_output_dir,
-            .max_chunk_bytes = options_.raw_chunk_max_bytes,
+            .output_dir = *options.raw_output_dir,
+            .max_chunk_bytes = options.raw_chunk_max_bytes,
         });
   }
-}
-
-SearchCoordinator::~SearchCoordinator() { Stop(); }
-
-void SearchCoordinator::Start() {
-  std::lock_guard<std::mutex> lock(state_mu_);
-  if (started_) return;
-  if (stopped_) return;
-
   if (chunk_writer_runtime_ != nullptr) {
     chunk_writer_runtime_->Start();
   }
   game_runner_.Start();
   inference_runtime_.Start();
   worker_runtime_.Start();
-  SeedGameTasks();
-  started_ = true;
+  SeedGameTasks(options.num_games);
 }
 
-void SearchCoordinator::Stop() {
+void SearchCoordinator::StopRun() {
   {
     std::lock_guard<std::mutex> lock(state_mu_);
     if (!started_ || stopped_) return;
@@ -82,19 +108,40 @@ void SearchCoordinator::Stop() {
   game_runner_.Stop();
   if (chunk_writer_runtime_ != nullptr) {
     chunk_writer_runtime_->Stop();
+    chunk_writer_runtime_.reset();
   } else {
     completed_game_queue_.close();
   }
 }
 
-void SearchCoordinator::SeedGameTasks() {
-  for (int i = 0; i < options_.num_games; ++i) {
+bool SearchCoordinator::WaitForCompletedGames(const RunGamesOptions& options) {
+  std::unique_lock<std::mutex> lock(state_mu_);
+  if (options.num_games == 0) return true;
+
+  const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+  return completion_cv_.wait_until(
+      lock, deadline,
+      [this, &options] { return completed_games_ >= options.num_games; });
+}
+
+void SearchCoordinator::OnCompletedGame() {
+  {
+    std::lock_guard<std::mutex> lock(state_mu_);
+    ++completed_games_;
+  }
+  completion_cv_.notify_all();
+}
+
+void SearchCoordinator::SeedGameTasks(int num_games) {
+  for (int i = 0; i < num_games; ++i) {
     std::unique_ptr<GameTask> task = task_factory_->Create();
     assert(task != nullptr);
     assert(task->searcher != nullptr);
     assert(task->state == TaskState::kNew);
     const bool pushed = ready_queue_.push(std::move(task));
-    assert(pushed);
+    if (!pushed) {
+      throw std::runtime_error("ready queue rejected seeded game task");
+    }
   }
 }
 

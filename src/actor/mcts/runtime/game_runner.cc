@@ -80,6 +80,9 @@ void GameRunner::RunLoop() {
     const bool pushed =
         channels_.completed_game_queue->push(std::move(completed_game));
     assert(pushed);
+    if (channels_.on_completed_game) {
+      channels_.on_completed_game();
+    }
   }
 }
 

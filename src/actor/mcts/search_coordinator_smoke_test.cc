@@ -6,13 +6,10 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "actor/backends/mock_backend.h"
@@ -21,8 +18,6 @@
 
 namespace engine {
 namespace {
-
-using namespace std::chrono_literals;
 
 struct ScopedTempDir {
   ScopedTempDir() {
@@ -38,15 +33,7 @@ struct ScopedTempDir {
   std::filesystem::path path;
 };
 
-bool WaitUntil(const std::function<bool()>& predicate,
-               std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (predicate()) return true;
-    std::this_thread::sleep_for(20ms);
-  }
-  return predicate();
-}
+using namespace std::chrono_literals;
 
 std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
   std::ifstream stream(path, std::ios::binary);
@@ -55,17 +42,6 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path) {
   }
   return std::vector<uint8_t>(std::istreambuf_iterator<char>(stream),
                               std::istreambuf_iterator<char>());
-}
-
-std::optional<raw_chunk_format::ParsedChunk> TryReadChunk(
-    const std::filesystem::path& path) {
-  if (!std::filesystem::exists(path)) return std::nullopt;
-
-  try {
-    return raw_chunk_format::ParseChunk(ReadFileBytes(path));
-  } catch (const std::runtime_error&) {
-    return std::nullopt;
-  }
 }
 
 bool SelectedMoveIsInPolicy(const raw_chunk_format::StoredPly& ply) {
@@ -107,10 +83,8 @@ TEST(SearchCoordinatorSmoke, GumbelMctsWithMockBackendCompletesGameAndWritesChun
   };
 
   SearchCoordinator coordinator(
-      SearchCoordinatorOptions{
+      SearchCoordinatorConfig{
           .num_workers = 1,
-          .num_games = 1,
-          .raw_output_dir = temp_dir.path,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = kSearchConfig.num_action,
@@ -125,29 +99,19 @@ TEST(SearchCoordinatorSmoke, GumbelMctsWithMockBackendCompletesGameAndWritesChun
   const std::string expected_initial_fen = lczero::PositionToFen(
       lczero::Position::FromFen(lczero::ChessBoard::kStartposFen));
 
-  std::optional<raw_chunk_format::ParsedChunk> parsed_chunk;
-  coordinator.Start();
-  ASSERT_TRUE(WaitUntil(
-      [&]() {
-        std::optional<raw_chunk_format::ParsedChunk> chunk =
-            TryReadChunk(chunk_path);
-        if (!chunk.has_value()) return false;
-        if (chunk->records.size() != 1u) return false;
-        if (chunk->records.front().game_result ==
-            lczero::GameResult::UNDECIDED) {
-          return false;
-        }
-        parsed_chunk = std::move(chunk);
-        return true;
-      },
-      120s));
-  coordinator.Stop();
+  ASSERT_TRUE(coordinator.RunGames(
+      RunGamesOptions{
+          .num_games = 1,
+          .raw_output_dir = temp_dir.path,
+          .timeout = 120s,
+      }));
 
-  ASSERT_TRUE(parsed_chunk.has_value());
-  EXPECT_EQ(parsed_chunk->version, raw_chunk_format::kChunkVersion);
-  ASSERT_EQ(parsed_chunk->records.size(), 1u);
+  const raw_chunk_format::ParsedChunk parsed_chunk =
+      raw_chunk_format::ParseChunk(ReadFileBytes(chunk_path));
+  EXPECT_EQ(parsed_chunk.version, raw_chunk_format::kChunkVersion);
+  ASSERT_EQ(parsed_chunk.records.size(), 1u);
 
-  const raw_chunk_format::StoredRawGame& record = parsed_chunk->records.front();
+  const raw_chunk_format::StoredRawGame& record = parsed_chunk.records.front();
   ASSERT_TRUE(record.initial_fen.has_value());
   EXPECT_EQ(*record.initial_fen, expected_initial_fen);
   EXPECT_NE(record.game_result, lczero::GameResult::UNDECIDED);

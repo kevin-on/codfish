@@ -8,13 +8,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -23,8 +20,6 @@
 
 namespace engine {
 namespace {
-
-using namespace std::chrono_literals;
 
 struct Probe {
   std::atomic<int> created{0};
@@ -48,15 +43,7 @@ struct ScopedTempDir {
   std::filesystem::path path;
 };
 
-bool WaitUntil(const std::function<bool()>& predicate,
-               std::chrono::milliseconds timeout = 2s) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (predicate()) return true;
-    std::this_thread::sleep_for(10ms);
-  }
-  return predicate();
-}
+using namespace std::chrono_literals;
 
 lczero::PositionHistory MakeStartHistory() {
   lczero::PositionHistory history;
@@ -189,15 +176,35 @@ class CountingTaskFactory final : public GameTaskFactory {
   Probe* probe_ = nullptr;
 };
 
-TEST(SearchCoordinator, StartSeedsInitialGamesAndRunsTerminalTasks) {
+class ThrowOnSecondCreateTaskFactory final : public GameTaskFactory {
+ public:
+  explicit ThrowOnSecondCreateTaskFactory(Probe* probe) : probe_(probe) {}
+
+  std::unique_ptr<GameTask> Create() override {
+    if (create_calls_ == 1) {
+      throw std::runtime_error("injected task factory failure");
+    }
+    ++create_calls_;
+    ++probe_->created;
+    auto task = std::make_unique<GameTask>();
+    task->searcher = std::make_unique<ImmediateTerminalSearcher>(probe_);
+    task->state = TaskState::kNew;
+    return task;
+  }
+
+ private:
+  Probe* probe_ = nullptr;
+  int create_calls_ = 0;
+};
+
+TEST(SearchCoordinator, RunGamesSeedsGamesAndRunsTerminalTasks) {
   Probe probe;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
   SearchCoordinator coordinator(
-      SearchCoordinatorOptions{
+      SearchCoordinatorConfig{
           .num_workers = 2,
-          .num_games = 3,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 4,
@@ -207,9 +214,11 @@ TEST(SearchCoordinator, StartSeedsInitialGamesAndRunsTerminalTasks) {
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  coordinator.Start();
-  ASSERT_TRUE(WaitUntil([&probe] { return probe.destroyed.load() == 3; }));
-  coordinator.Stop();
+  EXPECT_TRUE(coordinator.RunGames(
+      RunGamesOptions{
+          .num_games = 3,
+          .timeout = 2s,
+      }));
 
   EXPECT_EQ(probe.created.load(), 3);
   EXPECT_EQ(probe.run_started.load(), 3);
@@ -217,15 +226,14 @@ TEST(SearchCoordinator, StartSeedsInitialGamesAndRunsTerminalTasks) {
   EXPECT_EQ(probe.destroyed.load(), 3);
 }
 
-TEST(SearchCoordinator, StartWiresInferencePathForYieldingTasks) {
+TEST(SearchCoordinator, RunGamesWiresInferencePathForYieldingTasks) {
   Probe probe;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
   SearchCoordinator coordinator(
-      SearchCoordinatorOptions{
+      SearchCoordinatorConfig{
           .num_workers = 1,
-          .num_games = 2,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 2,
@@ -235,9 +243,11 @@ TEST(SearchCoordinator, StartWiresInferencePathForYieldingTasks) {
       std::make_unique<CountingTaskFactory<YieldOnceTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  coordinator.Start();
-  ASSERT_TRUE(WaitUntil([&probe] { return probe.destroyed.load() == 2; }));
-  coordinator.Stop();
+  EXPECT_TRUE(coordinator.RunGames(
+      RunGamesOptions{
+          .num_games = 2,
+          .timeout = 2s,
+      }));
 
   EXPECT_EQ(probe.created.load(), 2);
   EXPECT_EQ(probe.run_started.load(), 2);
@@ -245,15 +255,14 @@ TEST(SearchCoordinator, StartWiresInferencePathForYieldingTasks) {
   EXPECT_EQ(probe.destroyed.load(), 2);
 }
 
-TEST(SearchCoordinator, StopIsSafeWhenStartedIdle) {
+TEST(SearchCoordinator, RunGamesAllowsZeroGames) {
   Probe probe;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
   SearchCoordinator coordinator(
-      SearchCoordinatorOptions{
+      SearchCoordinatorConfig{
           .num_workers = 1,
-          .num_games = 0,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 1,
@@ -263,8 +272,11 @@ TEST(SearchCoordinator, StopIsSafeWhenStartedIdle) {
       std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
       backend, &encoder, ModelManifest{});
 
-  coordinator.Start();
-  coordinator.Stop();
+  EXPECT_TRUE(coordinator.RunGames(
+      RunGamesOptions{
+          .num_games = 0,
+          .timeout = 2s,
+      }));
 
   EXPECT_EQ(probe.created.load(), 0);
   EXPECT_EQ(probe.run_started.load(), 0);
@@ -272,18 +284,74 @@ TEST(SearchCoordinator, StopIsSafeWhenStartedIdle) {
   EXPECT_EQ(probe.destroyed.load(), 0);
 }
 
-TEST(SearchCoordinator, RawOutputDirStartsWriterAndPersistsCompletedGame) {
+TEST(SearchCoordinator, RunGamesRejectsSecondCallAtRuntime) {
+  Probe probe;
+  auto backend = std::make_shared<MockBackend>();
+  const FeatureEncoder encoder;
+
+  SearchCoordinator coordinator(
+      SearchCoordinatorConfig{
+          .num_workers = 1,
+          .inference =
+              InferenceRuntimeOptions{
+                  .max_batch_size = 1,
+                  .flush_timeout = 0ms,
+              },
+      },
+      std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
+      backend, &encoder, ModelManifest{});
+
+  EXPECT_TRUE(coordinator.RunGames(
+      RunGamesOptions{
+          .num_games = 1,
+          .timeout = 2s,
+      }));
+  EXPECT_THROW(
+      coordinator.RunGames(
+          RunGamesOptions{
+              .num_games = 1,
+              .timeout = 2s,
+          }),
+      std::logic_error);
+}
+
+TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
+  Probe probe;
+  auto backend = std::make_shared<MockBackend>();
+  const FeatureEncoder encoder;
+
+  SearchCoordinator coordinator(
+      SearchCoordinatorConfig{
+          .num_workers = 1,
+          .inference =
+              InferenceRuntimeOptions{
+                  .max_batch_size = 1,
+                  .flush_timeout = 0ms,
+              },
+      },
+      std::make_unique<ThrowOnSecondCreateTaskFactory>(&probe),
+      backend, &encoder, ModelManifest{});
+
+  EXPECT_THROW(
+      coordinator.RunGames(
+          RunGamesOptions{
+              .num_games = 2,
+              .timeout = 2s,
+          }),
+      std::runtime_error);
+
+  EXPECT_EQ(probe.created.load(), 1);
+  EXPECT_EQ(probe.destroyed.load(), 1);
+}
+
+TEST(SearchCoordinator, RunGamesWithRawOutputPersistsCompletedGame) {
   Probe probe;
   ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
-  const lczero::Move expected_move = ParseStartMove("e2e4");
-
   SearchCoordinator coordinator(
-      SearchCoordinatorOptions{
+      SearchCoordinatorConfig{
           .num_workers = 1,
-          .num_games = 1,
-          .raw_output_dir = temp_dir.path,
           .inference =
               InferenceRuntimeOptions{
                   .max_batch_size = 1,
@@ -294,9 +362,12 @@ TEST(SearchCoordinator, RawOutputDirStartsWriterAndPersistsCompletedGame) {
           &probe),
       backend, &encoder, ModelManifest{});
 
-  coordinator.Start();
-  ASSERT_TRUE(WaitUntil([&probe] { return probe.destroyed.load() == 1; }));
-  coordinator.Stop();
+  EXPECT_TRUE(coordinator.RunGames(
+      RunGamesOptions{
+          .num_games = 1,
+          .raw_output_dir = temp_dir.path,
+          .timeout = 2s,
+      }));
 
   EXPECT_EQ(probe.created.load(), 1);
   EXPECT_EQ(probe.run_started.load(), 2);
