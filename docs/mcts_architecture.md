@@ -64,6 +64,6 @@ The current implementation intentionally stays simple:
 
 - `Stop()` is not a graceful full drain.
 - Completed games are not automatically replaced with new ones.
-- Raw output is optional; without it, completed games are not persisted.
+- Raw output is required; completed games are always persisted as raw chunks.
 
 Those are current system properties, not accidental omissions in one file.

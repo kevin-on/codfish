@@ -58,6 +58,9 @@ void SearchCoordinator::RunGames(const RunGamesOptions& options) {
 void SearchCoordinator::StartRun(const RunGamesOptions& options) {
   assert(options.num_games >= 0);
   assert(options.raw_chunk_max_bytes > 0);
+  if (options.raw_output_dir.empty()) {
+    throw std::invalid_argument("raw_output_dir must be provided");
+  }
 
   {
     std::lock_guard<std::mutex> lock(state_mu_);
@@ -69,19 +72,15 @@ void SearchCoordinator::StartRun(const RunGamesOptions& options) {
     started_ = true;
   }
 
-  if (options.raw_output_dir.has_value()) {
-    chunk_writer_runtime_ = std::make_unique<ChunkWriterRuntime>(
-        ChunkWriterChannels{
-            .completed_game_queue = &completed_game_queue_,
-        },
-        ChunkWriterOptions{
-            .output_dir = *options.raw_output_dir,
-            .max_chunk_bytes = options.raw_chunk_max_bytes,
-        });
-  }
-  if (chunk_writer_runtime_ != nullptr) {
-    chunk_writer_runtime_->Start();
-  }
+  chunk_writer_runtime_ = std::make_unique<ChunkWriterRuntime>(
+      ChunkWriterChannels{
+          .completed_game_queue = &completed_game_queue_,
+      },
+      ChunkWriterOptions{
+          .output_dir = options.raw_output_dir,
+          .max_chunk_bytes = options.raw_chunk_max_bytes,
+      });
+  chunk_writer_runtime_->Start();
   game_runner_.Start();
   inference_runtime_.Start();
   worker_runtime_.Start();
@@ -101,12 +100,8 @@ void SearchCoordinator::StopRun() {
   worker_runtime_.Stop();
   inference_runtime_.Stop();
   game_runner_.Stop();
-  if (chunk_writer_runtime_ != nullptr) {
-    chunk_writer_runtime_->Stop();
-    chunk_writer_runtime_.reset();
-  } else {
-    completed_game_queue_.close();
-  }
+  chunk_writer_runtime_->Stop();
+  chunk_writer_runtime_.reset();
 }
 
 void SearchCoordinator::WaitForCompletedGames(int num_games) {

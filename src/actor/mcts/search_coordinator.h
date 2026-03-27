@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
-#include <optional>
 
 #include "actor/mcts/output/chunk_writer_runtime.h"
 #include "actor/mcts/primitives/thread_safe_queue.h"
@@ -31,7 +30,7 @@ struct SearchCoordinatorConfig {
 
 struct RunGamesOptions {
   int num_games = 0;
-  std::optional<std::filesystem::path> raw_output_dir;
+  std::filesystem::path raw_output_dir;
   uint64_t raw_chunk_max_bytes = ChunkWriterOptions::kDefaultMaxChunkBytes;
 };
 

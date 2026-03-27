@@ -199,6 +199,7 @@ class ThrowOnSecondCreateTaskFactory final : public GameTaskFactory {
 
 TEST(SearchCoordinator, RunGamesSeedsGamesAndRunsTerminalTasks) {
   Probe probe;
+  ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
@@ -216,6 +217,7 @@ TEST(SearchCoordinator, RunGamesSeedsGamesAndRunsTerminalTasks) {
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 3,
+      .raw_output_dir = temp_dir.path,
   });
 
   EXPECT_EQ(probe.created.load(), 3);
@@ -226,6 +228,7 @@ TEST(SearchCoordinator, RunGamesSeedsGamesAndRunsTerminalTasks) {
 
 TEST(SearchCoordinator, RunGamesWiresInferencePathForYieldingTasks) {
   Probe probe;
+  ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
@@ -243,6 +246,7 @@ TEST(SearchCoordinator, RunGamesWiresInferencePathForYieldingTasks) {
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 2,
+      .raw_output_dir = temp_dir.path,
   });
 
   EXPECT_EQ(probe.created.load(), 2);
@@ -253,6 +257,7 @@ TEST(SearchCoordinator, RunGamesWiresInferencePathForYieldingTasks) {
 
 TEST(SearchCoordinator, RunGamesAllowsZeroGames) {
   Probe probe;
+  ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
@@ -270,6 +275,7 @@ TEST(SearchCoordinator, RunGamesAllowsZeroGames) {
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 0,
+      .raw_output_dir = temp_dir.path,
   });
 
   EXPECT_EQ(probe.created.load(), 0);
@@ -278,8 +284,32 @@ TEST(SearchCoordinator, RunGamesAllowsZeroGames) {
   EXPECT_EQ(probe.destroyed.load(), 0);
 }
 
+TEST(SearchCoordinator, RunGamesRejectsEmptyRawOutputDir) {
+  Probe probe;
+  auto backend = std::make_shared<MockBackend>();
+  const FeatureEncoder encoder;
+
+  SearchCoordinator coordinator(
+      SearchCoordinatorConfig{
+          .num_workers = 1,
+          .inference =
+              InferenceRuntimeOptions{
+                  .max_batch_size = 1,
+                  .flush_timeout = 0ms,
+              },
+      },
+      std::make_unique<CountingTaskFactory<ImmediateTerminalSearcher>>(&probe),
+      backend, &encoder);
+
+  const RunGamesOptions options{
+      .num_games = 1,
+  };
+  EXPECT_THROW(coordinator.RunGames(options), std::invalid_argument);
+}
+
 TEST(SearchCoordinator, RunGamesRejectsSecondCallAtRuntime) {
   Probe probe;
+  ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
@@ -297,17 +327,20 @@ TEST(SearchCoordinator, RunGamesRejectsSecondCallAtRuntime) {
 
   coordinator.RunGames(RunGamesOptions{
       .num_games = 1,
+      .raw_output_dir = temp_dir.path,
   });
   EXPECT_THROW(
       coordinator.RunGames(
           RunGamesOptions{
               .num_games = 1,
+              .raw_output_dir = temp_dir.path,
           }),
       std::logic_error);
 }
 
 TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
   Probe probe;
+  ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;
 
@@ -327,6 +360,7 @@ TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
       coordinator.RunGames(
           RunGamesOptions{
               .num_games = 2,
+              .raw_output_dir = temp_dir.path,
           }),
       std::runtime_error);
 
