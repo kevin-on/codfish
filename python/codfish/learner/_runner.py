@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from collections.abc import Sequence
 
 import numpy as np
 
@@ -13,8 +13,8 @@ from ._trainer import Trainer
 from ._types import (
     LearnerRunnerConfig,
     ModelSpec,
-    TrainIterationReport,
     TrainerConfig,
+    TrainIterationReport,
 )
 from ._wandb import WandbSession
 

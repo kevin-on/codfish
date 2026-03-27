@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import importlib
-from dataclasses import asdict, dataclass, replace
 import os
-from pathlib import Path
 import shutil
 import sys
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 from typing import Sequence
 
 import torch
@@ -246,9 +246,7 @@ def _validate_runner_config(
     if runner_config.wandb is not None:
         raise ValueError("runner_config.wandb must be None; orchestrator owns W&B")
     if Path(runner_config.checkpoint_dir) != learner_dir:
-        raise ValueError(
-            "runner_config.checkpoint_dir must match run_root / 'learner'"
-        )
+        raise ValueError("runner_config.checkpoint_dir must match run_root / 'learner'")
 
 
 def _resume_state(learner_dir: Path, resume: bool) -> tuple[int, str | None]:
@@ -309,13 +307,13 @@ def _discover_iteration_chunk_paths(iteration_dir: Path) -> list[Path]:
     if not iteration_dir.is_dir():
         raise FileNotFoundError(f"missing self-play iteration dir: {iteration_dir}")
     return sorted(
-        path for path in iteration_dir.iterdir() if path.is_file() and path.suffix == ".bin"
+        path
+        for path in iteration_dir.iterdir()
+        if path.is_file() and path.suffix == ".bin"
     )
 
 
-def _discover_historical_chunk_paths(
-    selfplay_root: Path, iteration: int
-) -> list[Path]:
+def _discover_historical_chunk_paths(selfplay_root: Path, iteration: int) -> list[Path]:
     chunk_paths: list[Path] = []
     for historical_iteration in range(1, iteration):
         historical_dir = _iteration_dir(selfplay_root, historical_iteration)

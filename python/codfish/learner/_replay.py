@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
 import math
 import os
+from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
@@ -68,9 +68,7 @@ class ReplayBuffer:
     def rng_state(self) -> dict[str, object]:
         return copy.deepcopy(self._rng.bit_generator.state)
 
-    def ingest_chunk_files(
-        self, chunk_paths: Sequence[str | os.PathLike[str]]
-    ) -> int:
+    def ingest_chunk_files(self, chunk_paths: Sequence[str | os.PathLike[str]]) -> int:
         pending_inputs: list[np.ndarray] = []
         pending_policy_targets: list[np.ndarray] = []
         pending_wdl_targets: list[np.ndarray] = []
@@ -94,7 +92,9 @@ class ReplayBuffer:
         if not pending_inputs:
             return 0
 
-        inputs = np.concatenate((self._inputs, np.concatenate(pending_inputs, axis=0)), axis=0)
+        inputs = np.concatenate(
+            (self._inputs, np.concatenate(pending_inputs, axis=0)), axis=0
+        )
         policy_targets = np.concatenate(
             (self._policy_targets, np.concatenate(pending_policy_targets, axis=0)),
             axis=0,
@@ -136,7 +136,5 @@ class ReplayBuffer:
         if new_sample_count == 0:
             return 0
         return math.ceil(
-            self._config.replay_ratio
-            * new_sample_count
-            / self._config.batch_size
+            self._config.replay_ratio * new_sample_count / self._config.batch_size
         )

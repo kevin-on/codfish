@@ -18,18 +18,18 @@ from codfish.learner import (
     LearnerRunner,
     LearnerRunnerConfig,
     ModelSpec,
-    ReplayBuffer,
-    ReplayBufferConfig,
     RawChunkFile,
     RawGame,
     RawPly,
     RawPolicyEntry,
+    ReplayBuffer,
+    ReplayBufferConfig,
     SmallAlphaZeroResNet,
     SmallAlphaZeroResNetConfig,
-    TrainIterationReport,
-    TrainStepMetrics,
     Trainer,
     TrainerConfig,
+    TrainIterationReport,
+    TrainStepMetrics,
     WandbConfig,
     encode_raw_game,
     make_small_alphazero_resnet_spec,
@@ -40,7 +40,6 @@ from codfish.learner._checkpoint import (
     load_snapshot_checkpoint,
     load_training_checkpoint,
 )
-
 
 CHUNK_MAGIC = b"CFRG"
 CHUNK_VERSION = 1
@@ -157,7 +156,9 @@ def _small_model_config() -> SmallAlphaZeroResNetConfig:
 
 class _FakeWandbRun:
     def __init__(self) -> None:
-        self.define_metric_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self.define_metric_calls: list[
+            tuple[tuple[object, ...], dict[str, object]]
+        ] = []
         self.log_calls: list[dict[str, object]] = []
         self.finish_calls = 0
         self.log_artifact_calls = 0
@@ -206,7 +207,9 @@ class SmallAlphaZeroResNetTest(unittest.TestCase):
         model = SmallAlphaZeroResNet(config)
 
         with self.assertRaisesRegex(ValueError, "expected \\[B,"):
-            model(torch.zeros((2, config.input_channels + 1, 8, 8), dtype=torch.float32))
+            model(
+                torch.zeros((2, config.input_channels + 1, 8, 8), dtype=torch.float32)
+            )
 
     def test_make_small_alphazero_resnet_spec_exposes_full_model_config(
         self,
@@ -252,9 +255,7 @@ class TrainerTest(unittest.TestCase):
             self.policy_head = torch.nn.Linear(flat_size, policy_size)
             self.wdl_head = torch.nn.Linear(flat_size, 3)
 
-        def forward(
-            self, inputs: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             self.last_input_dtype = inputs.dtype
             self.last_input_shape = tuple(inputs.shape)
             flat = inputs.reshape(inputs.shape[0], -1)
@@ -266,9 +267,7 @@ class TrainerTest(unittest.TestCase):
             self.policy_size = policy_size
             self._dummy = torch.nn.Parameter(torch.zeros(1))
 
-        def forward(
-            self, inputs: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             batch = inputs.shape[0]
             return (
                 torch.zeros((batch, self.policy_size - 1), dtype=torch.float32),
@@ -311,8 +310,7 @@ class TrainerTest(unittest.TestCase):
             )
 
             before = {
-                name: param.detach().clone()
-                for name, param in model.named_parameters()
+                name: param.detach().clone() for name, param in model.named_parameters()
             }
             metrics = trainer.train_step(buffer.sample_minibatch())
 
@@ -398,8 +396,7 @@ class TrainerTest(unittest.TestCase):
             trainer.train_iteration(buffer, new_sample_count=1, iteration=3)
             latest_path = checkpoint_dir / "latest.pt"
             saved_params = {
-                name: param.detach().clone()
-                for name, param in model.named_parameters()
+                name: param.detach().clone() for name, param in model.named_parameters()
             }
 
             restored_model = self._ToyModel(buffer.input_channels, buffer.policy_size)
@@ -607,9 +604,7 @@ class LearnerRunnerTest(unittest.TestCase):
             self.policy_head = torch.nn.Linear(flat_size, policy_size)
             self.wdl_head = torch.nn.Linear(flat_size, 3)
 
-        def forward(
-            self, inputs: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             flat = inputs.reshape(inputs.shape[0], -1)
             return self.policy_head(flat), self.wdl_head(flat)
 
@@ -791,7 +786,9 @@ class LearnerRunnerTest(unittest.TestCase):
                 iteration: int,
             ) -> TrainIterationReport:
                 observed_sample_counts.append(replay_buffer.sample_count)
-                return original_train_iteration(replay_buffer, new_sample_count, iteration)
+                return original_train_iteration(
+                    replay_buffer, new_sample_count, iteration
+                )
 
             with mock.patch.object(
                 runner.trainer,
@@ -830,7 +827,9 @@ class LearnerRunnerTest(unittest.TestCase):
                 iteration: int,
             ) -> TrainIterationReport:
                 observed_rng_states.append(dict(replay_buffer._rng.bit_generator.state))
-                return original_train_iteration(replay_buffer, new_sample_count, iteration)
+                return original_train_iteration(
+                    replay_buffer, new_sample_count, iteration
+                )
 
             with mock.patch.object(
                 runner.trainer,
@@ -908,7 +907,9 @@ class LearnerRunnerTest(unittest.TestCase):
             first_report = runner.run_iteration([], [first_chunk], iteration=1)
 
             with self.assertRaisesRegex(RuntimeError, os.fspath(bad_chunk)):
-                runner.run_iteration([first_chunk], [second_chunk, bad_chunk], iteration=2)
+                runner.run_iteration(
+                    [first_chunk], [second_chunk, bad_chunk], iteration=2
+                )
 
         self.assertEqual(
             runner.trainer.global_learner_step, first_report.ending_global_step
@@ -1174,7 +1175,9 @@ class ReplayBufferTest(unittest.TestCase):
 
         expected = encode_raw_game(_canonical_raw_game())
         batch = buffer.sample_minibatch()
-        np.testing.assert_array_equal(batch.inputs, np.repeat(expected.inputs, 2, axis=0))
+        np.testing.assert_array_equal(
+            batch.inputs, np.repeat(expected.inputs, 2, axis=0)
+        )
         np.testing.assert_array_equal(
             batch.policy_targets, np.repeat(expected.policy_targets, 2, axis=0)
         )

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import shutil
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
 from ._types import TrainerConfig
-
 
 CHECKPOINT_FORMAT_VERSION = 1
 

@@ -112,13 +112,30 @@ Rewrite all tracked C/C++ files:
 tools/clang_format.sh fix
 ```
 
+Python linting and formatting uses `ruff`, including import sorting.
+
+Check all Python files:
+
+```bash
+uvx ruff check python
+uvx ruff format --check python
+```
+
+Rewrite Python files and apply safe lint fixes:
+
+```bash
+uvx ruff check --fix python
+uvx ruff format python
+```
+
 Enable the tracked git hooks for this clone:
 
 ```bash
 tools/install_git_hooks.sh
 ```
 
-The `pre-commit` hook auto-formats staged C/C++ files and re-stages them. It
-refuses to run if one of those files still has unstaged changes, so partial
-commits do not silently widen. GitHub Actions runs the same formatting check on
+The `pre-commit` hook auto-formats staged C/C++ files, runs `ruff` fixes on
+staged Python files, and re-stages them. It refuses to run if one of those
+files still has unstaged changes, so partial commits do not silently widen.
+GitHub Actions runs the same C/C++ formatting and Python lint/format checks on
 every push and pull request.

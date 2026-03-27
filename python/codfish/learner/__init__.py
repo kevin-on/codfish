@@ -19,9 +19,9 @@ from ._trainer import Trainer
 from ._types import (
     LearnerRunnerConfig,
     ModelSpec,
+    TrainerConfig,
     TrainIterationReport,
     TrainStepMetrics,
-    TrainerConfig,
     WandbConfig,
 )
 

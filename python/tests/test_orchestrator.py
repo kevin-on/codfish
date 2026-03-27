@@ -21,11 +21,11 @@ from codfish.learner import (
     RawPly,
     RawPolicyEntry,
     ReplayBufferConfig,
-    TrainIterationReport,
     TrainerConfig,
+    TrainIterationReport,
     WandbConfig,
 )
-from codfish.learner._api import get_model_io_shape, read_raw_chunk_file
+from codfish.learner._api import get_model_io_shape
 from codfish.learner._checkpoint import (
     atomic_torch_save,
     build_training_checkpoint_payload,
@@ -38,10 +38,10 @@ from codfish.orchestrator import (
     run_selfplay_update_loop,
 )
 
-
 CHUNK_MAGIC = b"CFRG"
 CHUNK_VERSION = 1
 STORED_MOVE_UCI_BYTES = 5
+
 
 def _canonical_raw_game() -> RawGame:
     return RawGame(
@@ -123,9 +123,7 @@ def _toy_model_spec() -> ModelSpec:
             self.policy_head = torch.nn.Linear(flat_size, policy_size)
             self.wdl_head = torch.nn.Linear(flat_size, 3)
 
-        def forward(
-            self, inputs: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             flat = inputs.reshape(inputs.shape[0], -1)
             return self.policy_head(flat), self.wdl_head(flat)
 
@@ -158,7 +156,9 @@ def _replay_config() -> ReplayBufferConfig:
     )
 
 
-def _runner_config(run_root: pathlib.Path, *, resume: bool = False) -> LearnerRunnerConfig:
+def _runner_config(
+    run_root: pathlib.Path, *, resume: bool = False
+) -> LearnerRunnerConfig:
     return LearnerRunnerConfig(
         device="cpu",
         checkpoint_dir=run_root / "learner",
@@ -209,7 +209,9 @@ def _write_minimal_checkpoint(
 class _FakeWandbRun:
     def __init__(self, run_id: str = "fake-wandb-run-id") -> None:
         self.id = run_id
-        self.define_metric_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        self.define_metric_calls: list[
+            tuple[tuple[object, ...], dict[str, object]]
+        ] = []
         self.log_calls: list[dict[str, object]] = []
         self.finish_calls = 0
 
@@ -297,15 +299,20 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
             ):
                 reports = run_selfplay_update_loop(
                     run_root=run_root,
@@ -323,7 +330,9 @@ class OrchestratorTest(unittest.TestCase):
             [instance.config.resume for instance in _FakeLearnerRunner.instances],
             [False, True],
         )
-        self.assertTrue(all(instance.closed for instance in _FakeLearnerRunner.instances))
+        self.assertTrue(
+            all(instance.closed for instance in _FakeLearnerRunner.instances)
+        )
         self.assertEqual(
             [instance.run_calls[0][2] for instance in _FakeLearnerRunner.instances],
             [1, 2],
@@ -351,15 +360,20 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
             ):
                 reports = run_selfplay_update_loop(
                     run_root=run_root,
@@ -406,16 +420,22 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
-            ), self.assertRaisesRegex(FileNotFoundError, "iter_000002"):
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                self.assertRaisesRegex(FileNotFoundError, "iter_000002"),
+            ):
                 run_selfplay_update_loop(
                     run_root=run_root,
                     num_iterations=1,
@@ -457,16 +477,23 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000002.bin", [_canonical_raw_game()])
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000002.bin", [_canonical_raw_game()]
+                )
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
             ):
                 run_selfplay_update_loop(
                     run_root=run_root,
@@ -506,18 +533,24 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
-            ), mock.patch(
-                "importlib.import_module",
-                return_value=fake_wandb,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                mock.patch(
+                    "importlib.import_module",
+                    return_value=fake_wandb,
+                ),
             ):
                 run_selfplay_update_loop(
                     run_root=run_root,
@@ -558,18 +591,24 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
-            ), mock.patch(
-                "importlib.import_module",
-                return_value=fake_wandb,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                mock.patch(
+                    "importlib.import_module",
+                    return_value=fake_wandb,
+                ),
             ):
                 run_selfplay_update_loop(
                     run_root=run_root,
@@ -595,15 +634,20 @@ class OrchestratorTest(unittest.TestCase):
                 launcher: NativeSelfPlayLauncher,
                 output_dir: pathlib.Path,
             ) -> None:
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
-            ), mock.patch(
-                "importlib.import_module",
-                return_value=fake_wandb,
+            with (
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                mock.patch(
+                    "importlib.import_module",
+                    return_value=fake_wandb,
+                ),
             ):
                 run_selfplay_update_loop(
                     run_root=run_root,
@@ -636,17 +680,23 @@ class OrchestratorTest(unittest.TestCase):
             ) -> None:
                 nonlocal launcher_calls
                 launcher_calls += 1
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
                 raise RuntimeError("injected self-play failure")
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=failing_run_selfplay,
-            ), self.assertRaisesRegex(RuntimeError, "injected self-play failure"):
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=failing_run_selfplay,
+                ),
+                self.assertRaisesRegex(RuntimeError, "injected self-play failure"),
+            ):
                 run_selfplay_update_loop(
                     run_root=run_root,
                     num_iterations=1,
@@ -668,15 +718,20 @@ class OrchestratorTest(unittest.TestCase):
             ) -> None:
                 nonlocal launcher_calls
                 launcher_calls += 1
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=successful_run_selfplay,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=successful_run_selfplay,
+                ),
             ):
                 reports = run_selfplay_update_loop(
                     run_root=run_root,
@@ -704,7 +759,9 @@ class OrchestratorTest(unittest.TestCase):
             ) -> None:
                 nonlocal launcher_calls
                 launcher_calls += 1
-                _write_chunk_file(output_dir / "games-000001.bin", [_canonical_raw_game()])
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
 
             class FailingLearnerRunner(_FakeLearnerRunner):
                 def run_iteration(
@@ -715,14 +772,18 @@ class OrchestratorTest(unittest.TestCase):
                 ) -> TrainIterationReport:
                     raise RuntimeError("injected learner failure")
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                FailingLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
-            ), self.assertRaisesRegex(RuntimeError, "injected learner failure"):
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    FailingLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                self.assertRaisesRegex(RuntimeError, "injected learner failure"),
+            ):
                 run_selfplay_update_loop(
                     run_root=run_root,
                     num_iterations=1,
@@ -738,13 +799,18 @@ class OrchestratorTest(unittest.TestCase):
             self.assertFalse(_partial_iteration_dir(iteration_dir).exists())
             self.assertEqual(launcher_calls, 1)
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                _FakeLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                side_effect=AssertionError("existing self-play dir should be reused"),
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    side_effect=AssertionError(
+                        "existing self-play dir should be reused"
+                    ),
+                ),
             ):
                 reports = run_selfplay_update_loop(
                     run_root=run_root,
@@ -814,13 +880,16 @@ class OrchestratorTest(unittest.TestCase):
                         copy.deepcopy(self._replay_rng.bit_generator.state)
                     )
 
-            with mock.patch(
-                "codfish.orchestrator.LearnerRunner",
-                RecordingLearnerRunner,
-            ), mock.patch.object(
-                NativeSelfPlayLauncher,
-                "run_selfplay",
-                new=fake_run_selfplay,
+            with (
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    RecordingLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
             ):
                 second_reports = run_selfplay_update_loop(
                     run_root=run_root,
@@ -883,4 +952,6 @@ class OrchestratorTest(unittest.TestCase):
             )
 
             self.assertTrue((run_root / "learner" / "latest.pt").exists())
-            self.assertTrue(sorted((run_root / "selfplay" / "iter_000001").glob("*.bin")))
+            self.assertTrue(
+                sorted((run_root / "selfplay" / "iter_000001").glob("*.bin"))
+            )

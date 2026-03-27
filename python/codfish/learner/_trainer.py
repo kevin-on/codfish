@@ -14,7 +14,8 @@ from ._checkpoint import (
     load_training_checkpoint,
 )
 from ._replay import ReplayBuffer
-from ._types import TrainIterationReport, TrainStepMetrics, TrainerConfig
+from ._types import TrainerConfig, TrainIterationReport, TrainStepMetrics
+
 
 class Trainer:
     def __init__(
@@ -79,12 +80,10 @@ class Trainer:
                 f"{tuple(wdl_targets.shape)}"
             )
 
-        policy_loss = -(policy_targets * F.log_softmax(policy_logits, dim=-1)).sum(
-            dim=-1
-        ).mean()
-        wdl_loss = -(wdl_targets * F.log_softmax(wdl_logits, dim=-1)).sum(
-            dim=-1
-        ).mean()
+        policy_loss = (
+            -(policy_targets * F.log_softmax(policy_logits, dim=-1)).sum(dim=-1).mean()
+        )
+        wdl_loss = -(wdl_targets * F.log_softmax(wdl_logits, dim=-1)).sum(dim=-1).mean()
         total_loss = policy_loss + self.config.value_loss_weight * wdl_loss
 
         self.optimizer.zero_grad()

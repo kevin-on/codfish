@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import importlib
+from dataclasses import asdict
 
 from ._checkpoint import _trainer_config_payload
 from ._replay import ReplayBufferConfig
 from ._types import (
     ModelSpec,
-    TrainIterationReport,
     TrainerConfig,
+    TrainIterationReport,
     WandbConfig,
 )
 
