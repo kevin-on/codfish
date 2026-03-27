@@ -108,8 +108,8 @@ void SearchCoordinator::WaitForCompletedGames(int num_games) {
   std::unique_lock<std::mutex> lock(state_mu_);
   if (num_games == 0) return;
 
-  completion_cv_.wait(lock,
-                      [this, num_games] { return completed_games_ >= num_games; });
+  completion_cv_.wait(
+      lock, [this, num_games] { return completed_games_ >= num_games; });
 }
 
 void SearchCoordinator::OnCompletedGame() {

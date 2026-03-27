@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "chess/position.h"
 #include "actor/mcts/output/raw_chunk_format.h"
+#include "chess/position.h"
 
 namespace engine {
 namespace {
@@ -42,7 +42,8 @@ raw_chunk_format::StoredRawGame BuildStoredRawGame(
     const lczero::Position& root_position = draft.root_history.Last();
 
     raw_chunk_format::StoredPly ply;
-    ply.selected_move_uci = MoveToAbsoluteUci(root_position, draft.selected_move);
+    ply.selected_move_uci =
+        MoveToAbsoluteUci(root_position, draft.selected_move);
     ply.policy.reserve(draft.legal_moves.size());
     for (std::size_t i = 0; i < draft.legal_moves.size(); ++i) {
       ply.policy.push_back(raw_chunk_format::StoredPolicyEntry{

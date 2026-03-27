@@ -133,16 +133,13 @@ void RunMockSelfPlay(const MockSelfPlayOptions& options) {
                   .flush_timeout = 0us,
               },
       },
-      std::make_unique<GumbelTaskFactory>(search_config),
-      backend,
-      &encoder);
+      std::make_unique<GumbelTaskFactory>(search_config), backend, &encoder);
 
-  coordinator.RunGames(
-      RunGamesOptions{
-          .num_games = options.num_games,
-          .raw_output_dir = options.raw_output_dir,
-          .raw_chunk_max_bytes = options.raw_chunk_max_bytes,
-      });
+  coordinator.RunGames(RunGamesOptions{
+      .num_games = options.num_games,
+      .raw_output_dir = options.raw_output_dir,
+      .raw_chunk_max_bytes = options.raw_chunk_max_bytes,
+  });
 
   ValidateRawChunkOutput(options.raw_output_dir, options.num_games);
 }

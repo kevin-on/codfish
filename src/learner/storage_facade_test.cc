@@ -45,7 +45,8 @@ std::vector<uint8_t> SerializeChunk(
 
 void WriteBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
-  std::ofstream stream(path, std::ios::binary | std::ios::out | std::ios::trunc);
+  std::ofstream stream(path,
+                       std::ios::binary | std::ios::out | std::ios::trunc);
   if (!stream.is_open()) {
     throw std::runtime_error("failed to open storage facade fixture");
   }

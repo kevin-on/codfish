@@ -1,5 +1,3 @@
-#include "learner/sample_facade_internal.h"
-
 #include <gtest/gtest.h>
 
 #include <array>
@@ -11,13 +9,13 @@
 
 #include "chess/position.h"
 #include "engine/encoder.h"
+#include "learner/sample_facade_internal.h"
 
 namespace engine::learner::internal {
 namespace {
 
 RawGame MakeRawGame(std::optional<std::string> initial_fen,
-                    lczero::GameResult game_result,
-                    std::vector<RawPly> plies) {
+                    lczero::GameResult game_result, std::vector<RawPly> plies) {
   return RawGame{
       .initial_fen = std::move(initial_fen),
       .game_result = game_result,
@@ -64,8 +62,7 @@ TEST(SampleFacadeInternal, BuildsWhiteToMoveSinglePlySample) {
 
   ASSERT_EQ(samples.size(), 1u);
   EXPECT_EQ(samples[0].selected_move_uci, "e2e4");
-  EXPECT_EQ(samples[0].wdl_target,
-            (std::array<float, 3>{1.0f, 0.0f, 0.0f}));
+  EXPECT_EQ(samples[0].wdl_target, (std::array<float, 3>{1.0f, 0.0f, 0.0f}));
 
   const lczero::PositionHistory history = MakeHistory(*raw_game.initial_fen);
   const auto expected_input = EncodeHistory(history);
@@ -98,8 +95,7 @@ TEST(SampleFacadeInternal, BuildsBlackToMoveAbsoluteUciSample) {
 
   ASSERT_EQ(samples.size(), 1u);
   EXPECT_EQ(samples[0].selected_move_uci, "e7e5");
-  EXPECT_EQ(samples[0].wdl_target,
-            (std::array<float, 3>{1.0f, 0.0f, 0.0f}));
+  EXPECT_EQ(samples[0].wdl_target, (std::array<float, 3>{1.0f, 0.0f, 0.0f}));
 
   const lczero::PositionHistory history = MakeHistory(*raw_game.initial_fen);
   const lczero::Move move = history.Last().GetBoard().ParseMove("e7e5");
@@ -133,12 +129,11 @@ TEST(SampleFacadeInternal, PreservesHistoryProgressionAcrossPlies) {
   ASSERT_EQ(samples.size(), 2u);
   EXPECT_EQ(samples[0].selected_move_uci, "e2e4");
   EXPECT_EQ(samples[1].selected_move_uci, "d7d5");
-  EXPECT_EQ(samples[0].wdl_target,
-            (std::array<float, 3>{0.0f, 1.0f, 0.0f}));
-  EXPECT_EQ(samples[1].wdl_target,
-            (std::array<float, 3>{0.0f, 1.0f, 0.0f}));
+  EXPECT_EQ(samples[0].wdl_target, (std::array<float, 3>{0.0f, 1.0f, 0.0f}));
+  EXPECT_EQ(samples[1].wdl_target, (std::array<float, 3>{0.0f, 1.0f, 0.0f}));
 
-  const lczero::PositionHistory first_history = MakeHistory(*raw_game.initial_fen);
+  const lczero::PositionHistory first_history =
+      MakeHistory(*raw_game.initial_fen);
   const lczero::PositionHistory second_history =
       MakeHistory(*raw_game.initial_fen, {"e2e4"});
   EXPECT_EQ(samples[0].input, EncodeHistory(first_history));
@@ -171,8 +166,7 @@ TEST(SampleFacadeInternal, ThrowsWhenInitialFenIsMissing) {
 
 TEST(SampleFacadeInternal, ThrowsWhenGameResultIsUndecided) {
   const RawGame raw_game = MakeRawGame(
-      "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
-      lczero::GameResult::UNDECIDED,
+      "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", lczero::GameResult::UNDECIDED,
       {
           RawPly{
               .selected_move_uci = "e2e4",

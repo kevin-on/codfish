@@ -36,8 +36,7 @@ class RecordingBackend final : public InferenceBackend {
 
     for (int batch_idx = 0; batch_idx < batch.batch_size; ++batch_idx) {
       const int item_id = next_item_id_++;
-      for (int policy_idx = 0; policy_idx < lczero::kPolicySize;
-           ++policy_idx) {
+      for (int policy_idx = 0; policy_idx < lczero::kPolicySize; ++policy_idx) {
         out->policy_logits.push_back(
             static_cast<float>(item_id * 10 + policy_idx));
       }
@@ -92,14 +91,15 @@ void ExpectItemPayload(const EvalResponseItem& item, int expected_item_id) {
   ASSERT_EQ(item.policy_logits.size(),
             static_cast<std::size_t>(lczero::kPolicySize));
   ASSERT_EQ(item.wdl_probs.size(), 3u);
-  EXPECT_FLOAT_EQ(item.policy_logits[0], static_cast<float>(expected_item_id * 10));
+  EXPECT_FLOAT_EQ(item.policy_logits[0],
+                  static_cast<float>(expected_item_id * 10));
   EXPECT_FLOAT_EQ(item.policy_logits[1],
                   static_cast<float>(expected_item_id * 10 + 1));
   EXPECT_FLOAT_EQ(item.policy_logits[2],
                   static_cast<float>(expected_item_id * 10 + 2));
-  EXPECT_FLOAT_EQ(item.policy_logits.back(),
-                  static_cast<float>(expected_item_id * 10 +
-                                     (lczero::kPolicySize - 1)));
+  EXPECT_FLOAT_EQ(
+      item.policy_logits.back(),
+      static_cast<float>(expected_item_id * 10 + (lczero::kPolicySize - 1)));
   EXPECT_FLOAT_EQ(item.wdl_probs[0], static_cast<float>(expected_item_id));
   EXPECT_FLOAT_EQ(item.wdl_probs[1],
                   static_cast<float>(expected_item_id + 100));

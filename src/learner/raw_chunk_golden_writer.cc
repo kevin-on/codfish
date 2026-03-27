@@ -46,7 +46,8 @@ int WriteCanonicalChunk(const std::filesystem::path& output_path) {
     return 1;
   }
 
-  const std::vector<char> header = engine::raw_chunk_format::SerializeChunkHeader();
+  const std::vector<char> header =
+      engine::raw_chunk_format::SerializeChunkHeader();
   const std::vector<char> record =
       engine::raw_chunk_format::SerializeChunkRecord(MakeCanonicalRawGame());
 

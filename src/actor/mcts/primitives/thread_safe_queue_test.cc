@@ -1,10 +1,10 @@
 #include "actor/mcts/primitives/thread_safe_queue.h"
 
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <future>
 #include <thread>
-
-#include <gtest/gtest.h>
 
 namespace engine {
 namespace {
@@ -71,8 +71,8 @@ TEST(ThreadSafeQueue, PopReturnsNulloptWhenCloseWakesConsumer) {
 TEST(ThreadSafeQueue, PopUntilTimesOutWhenEmpty) {
   ThreadSafeQueue<int> queue;
 
-  std::optional<int> value = queue.pop_until(std::chrono::steady_clock::now() +
-                                             20ms);
+  std::optional<int> value =
+      queue.pop_until(std::chrono::steady_clock::now() + 20ms);
   EXPECT_FALSE(value.has_value());
 }
 

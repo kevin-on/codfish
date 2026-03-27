@@ -1,5 +1,4 @@
 #include "learner/sample_facade.h"
-#include "learner/sample_facade_internal.h"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +11,7 @@
 #include "chess/error.h"
 #include "chess/position.h"
 #include "chess/types.h"
+#include "learner/sample_facade_internal.h"
 
 namespace engine::learner::internal {
 namespace {

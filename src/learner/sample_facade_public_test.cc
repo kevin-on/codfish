@@ -1,5 +1,3 @@
-#include "learner/sample_facade.h"
-
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -14,13 +12,13 @@
 
 #include "chess/position.h"
 #include "engine/encoder.h"
+#include "learner/sample_facade.h"
 
 namespace engine::learner {
 namespace {
 
 RawGame MakeRawGame(std::optional<std::string> initial_fen,
-                    lczero::GameResult game_result,
-                    std::vector<RawPly> plies) {
+                    lczero::GameResult game_result, std::vector<RawPly> plies) {
   return RawGame{
       .initial_fen = std::move(initial_fen),
       .game_result = game_result,
@@ -79,8 +77,7 @@ TEST(SampleFacadePublic, ExposesMetadataAndBufferSizes) {
   EXPECT_EQ(samples.policy_targets.size(),
             static_cast<std::size_t>(lczero::kPolicySize));
   EXPECT_EQ(samples.wdl_targets.size(), 3u);
-  EXPECT_EQ(samples.wdl_targets,
-            (std::vector<float>{1.0f, 0.0f, 0.0f}));
+  EXPECT_EQ(samples.wdl_targets, (std::vector<float>{1.0f, 0.0f, 0.0f}));
 
   const lczero::PositionHistory history = MakeHistory(*raw_game.initial_fen);
   const auto expected_input = EncodeHistory(history);
@@ -88,7 +85,8 @@ TEST(SampleFacadePublic, ExposesMetadataAndBufferSizes) {
 
   const lczero::Move move = history.Last().GetBoard().ParseMove("e2e4");
   const lczero::Move alt = history.Last().GetBoard().ParseMove("e2e3");
-  EXPECT_FLOAT_EQ(samples.policy_targets[lczero::MoveToNNIndex(move, 0)], 0.75f);
+  EXPECT_FLOAT_EQ(samples.policy_targets[lczero::MoveToNNIndex(move, 0)],
+                  0.75f);
   EXPECT_FLOAT_EQ(samples.policy_targets[lczero::MoveToNNIndex(alt, 0)], 0.25f);
 }
 
@@ -127,15 +125,15 @@ TEST(SampleFacadePublic, PreservesFlatteningOrderAcrossPlies) {
   EXPECT_EQ(samples.wdl_targets,
             (std::vector<float>{0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f}));
 
-  const lczero::Move first_move = first_history.Last().GetBoard().ParseMove("e2e4");
+  const lczero::Move first_move =
+      first_history.Last().GetBoard().ParseMove("e2e4");
   const lczero::Move second_move =
       second_history.Last().GetBoard().ParseMove("d7d5");
-  EXPECT_FLOAT_EQ(
-      samples.policy_targets[lczero::MoveToNNIndex(first_move, 0)], 1.0f);
-  EXPECT_FLOAT_EQ(
-      samples.policy_targets[lczero::kPolicySize +
-                             lczero::MoveToNNIndex(second_move, 0)],
-      1.0f);
+  EXPECT_FLOAT_EQ(samples.policy_targets[lczero::MoveToNNIndex(first_move, 0)],
+                  1.0f);
+  EXPECT_FLOAT_EQ(samples.policy_targets[lczero::kPolicySize +
+                                         lczero::MoveToNNIndex(second_move, 0)],
+                  1.0f);
 }
 
 TEST(SampleFacadePublic, ReturnsMetadataOnlyForValidEmptyGame) {
@@ -151,9 +149,8 @@ TEST(SampleFacadePublic, ReturnsMetadataOnlyForValidEmptyGame) {
 }
 
 TEST(SampleFacadePublic, RejectsInvalidEmptyGame) {
-  EXPECT_THROW(static_cast<void>(
-                   EncodeRawGame(MakeRawGame(
-                       std::nullopt, lczero::GameResult::UNDECIDED, {}))),
+  EXPECT_THROW(static_cast<void>(EncodeRawGame(MakeRawGame(
+                   std::nullopt, lczero::GameResult::UNDECIDED, {}))),
                std::runtime_error);
 }
 

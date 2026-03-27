@@ -8,6 +8,7 @@ Requirements:
 
 - CMake 3.23+
 - A C++23 compiler
+- `clang-format` for C/C++ formatting checks
 - GoogleTest available to CMake
 - `uv` for the managed Python environment when building learner bindings
 - Python 3 development headers only when `CODFISH_BUILD_LEARNER_PYTHON=ON`
@@ -94,3 +95,30 @@ ctest --test-dir build/no-pext-python --output-on-failure
 
 The configure step writes `compile_commands.json` into the selected build
 directory for clangd and other editor tooling.
+
+## Formatting
+
+C/C++ formatting uses `.clang-format`.
+
+Check all tracked C/C++ files:
+
+```bash
+tools/clang_format.sh check
+```
+
+Rewrite all tracked C/C++ files:
+
+```bash
+tools/clang_format.sh fix
+```
+
+Enable the tracked git hooks for this clone:
+
+```bash
+tools/install_git_hooks.sh
+```
+
+The `pre-commit` hook auto-formats staged C/C++ files and re-stages them. It
+refuses to run if one of those files still has unstaged changes, so partial
+commits do not silently widen. GitHub Actions runs the same formatting check on
+every push and pull request.

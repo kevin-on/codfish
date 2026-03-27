@@ -1,19 +1,20 @@
-#include "learner/raw_types.h"
-#include "learner/sample_facade.h"
-#include "learner/storage_facade.h"
+#include <gtest/gtest.h>
 
 #include <filesystem>
 #include <type_traits>
 #include <utility>
 
-#include <gtest/gtest.h>
+#include "learner/raw_types.h"
+#include "learner/sample_facade.h"
+#include "learner/storage_facade.h"
 
 namespace engine::learner {
 namespace {
 
-using ReadRawChunkFileReturn = decltype(
-    ReadRawChunkFile(std::declval<const std::filesystem::path&>()));
-using EncodeRawGameReturn = decltype(EncodeRawGame(std::declval<const RawGame&>()));
+using ReadRawChunkFileReturn =
+    decltype(ReadRawChunkFile(std::declval<const std::filesystem::path&>()));
+using EncodeRawGameReturn =
+    decltype(EncodeRawGame(std::declval<const RawGame&>()));
 
 static_assert(std::is_same_v<ReadRawChunkFileReturn, RawChunkFile>);
 static_assert(std::is_same_v<EncodeRawGameReturn, EncodedGameSamples>);

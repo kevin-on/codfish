@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "engine/encoder.h"
-#include "learner/raw_types.h"
 #include "lc0/move_index.h"
+#include "learner/raw_types.h"
 
 namespace engine::learner::internal {
 

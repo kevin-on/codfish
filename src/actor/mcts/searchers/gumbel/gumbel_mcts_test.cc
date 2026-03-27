@@ -1,10 +1,10 @@
 #include "actor/mcts/searchers/gumbel/gumbel_mcts.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <numeric>
 #include <vector>
-
-#include <gtest/gtest.h>
 
 #include "lc0/move_index.h"
 
@@ -34,7 +34,8 @@ TEST(GumbelMCTS, NonTerminalSearchResultCarriesRootHistoryAndPolicyMetadata) {
   ASSERT_EQ(request->items.size(), 1u);
   EXPECT_EQ(request->items[0].len, 1);
 
-  std::optional<EvalRequest> next_request = coroutine.send(MakeRootEvalResponse());
+  std::optional<EvalRequest> next_request =
+      coroutine.send(MakeRootEvalResponse());
   EXPECT_FALSE(next_request.has_value());
   ASSERT_TRUE(coroutine.done());
 

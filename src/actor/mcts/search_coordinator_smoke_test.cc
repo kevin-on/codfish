@@ -1,5 +1,3 @@
-#include "actor/mcts/search_coordinator.h"
-
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -14,6 +12,7 @@
 
 #include "actor/backends/mock_backend.h"
 #include "actor/mcts/output/raw_chunk_format.h"
+#include "actor/mcts/search_coordinator.h"
 #include "actor/mcts/searchers/gumbel/gumbel_mcts.h"
 
 namespace engine {
@@ -66,7 +65,8 @@ class GumbelTaskFactory final : public GameTaskFactory {
   GumbelMCTSConfig config_;
 };
 
-TEST(SearchCoordinatorSmoke, GumbelMctsWithMockBackendCompletesGameAndWritesChunk) {
+TEST(SearchCoordinatorSmoke,
+     GumbelMctsWithMockBackendCompletesGameAndWritesChunk) {
   ScopedTempDir temp_dir;
   auto backend = std::make_shared<MockBackend>();
   const FeatureEncoder encoder;

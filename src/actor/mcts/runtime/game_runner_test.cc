@@ -1,11 +1,11 @@
 #include "actor/mcts/runtime/game_runner.h"
 
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <future>
 #include <memory>
 #include <utility>
-
-#include <gtest/gtest.h>
 
 namespace engine {
 namespace {

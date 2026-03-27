@@ -1,11 +1,11 @@
 #include "encoder.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <numeric>
 #include <vector>
-
-#include <gtest/gtest.h>
 
 namespace engine {
 namespace {
@@ -24,8 +24,7 @@ std::span<const uint8_t> GlobalSlot(std::span<const uint8_t> input) {
 }
 
 std::span<const uint8_t> Plane(std::span<const uint8_t> block, int plane_idx) {
-  const std::size_t offset =
-      static_cast<std::size_t>(plane_idx) * kBoardArea;
+  const std::size_t offset = static_cast<std::size_t>(plane_idx) * kBoardArea;
   return block.subspan(offset, kBoardArea);
 }
 
@@ -146,8 +145,8 @@ TEST(FeatureEncoder, EncodeOneSpanMatchesPositionHistoryOverload) {
   const auto from_history = Encode(history);
   const auto from_span = Encode(std::span<const lczero::Position>(positions));
 
-  EXPECT_TRUE(std::equal(from_history.begin(), from_history.end(),
-                         from_span.begin()));
+  EXPECT_TRUE(
+      std::equal(from_history.begin(), from_history.end(), from_span.begin()));
 }
 
 TEST(FeatureEncoder, EncodeBatchSpanMatchesEncodeOneOutputs) {

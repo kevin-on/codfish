@@ -1,11 +1,11 @@
 #include "actor/mcts/runtime/worker_runtime.h"
 
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <future>
 #include <memory>
 #include <utility>
-
-#include <gtest/gtest.h>
 
 namespace engine {
 namespace {
@@ -87,9 +87,9 @@ TEST(WorkerRuntime, NewTaskCompletesToCompletionQueue) {
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   ThreadSafeQueue<PendingEval> request_queue;
   ThreadSafeQueue<CompletedSearch> completion_queue;
-  WorkerRuntime runtime(/*num_workers=*/1,
-                        MakeChannels(ready_queue, request_queue,
-                                     completion_queue));
+  WorkerRuntime runtime(
+      /*num_workers=*/1,
+      MakeChannels(ready_queue, request_queue, completion_queue));
   runtime.Start();
 
   auto searcher = std::make_unique<ImmediateSearcher>();
@@ -111,9 +111,9 @@ TEST(WorkerRuntime, YieldEvalThenResponseThenComplete) {
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   ThreadSafeQueue<PendingEval> request_queue;
   ThreadSafeQueue<CompletedSearch> completion_queue;
-  WorkerRuntime runtime(/*num_workers=*/1,
-                        MakeChannels(ready_queue, request_queue,
-                                     completion_queue));
+  WorkerRuntime runtime(
+      /*num_workers=*/1,
+      MakeChannels(ready_queue, request_queue, completion_queue));
   runtime.Start();
 
   auto searcher = std::make_unique<YieldOnceSearcher>();
@@ -152,9 +152,9 @@ TEST(WorkerRuntime, StopWakesBlockedWorkers) {
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   ThreadSafeQueue<PendingEval> request_queue;
   ThreadSafeQueue<CompletedSearch> completion_queue;
-  WorkerRuntime runtime(/*num_workers=*/2,
-                        MakeChannels(ready_queue, request_queue,
-                                     completion_queue));
+  WorkerRuntime runtime(
+      /*num_workers=*/2,
+      MakeChannels(ready_queue, request_queue, completion_queue));
   runtime.Start();
 
   std::future<void> stop_future =
@@ -171,9 +171,9 @@ TEST(WorkerRuntime, DerivedTaskSurvivesHandoffAndDeletesSafely) {
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   ThreadSafeQueue<PendingEval> request_queue;
   ThreadSafeQueue<CompletedSearch> completion_queue;
-  WorkerRuntime runtime(/*num_workers=*/1,
-                        MakeChannels(ready_queue, request_queue,
-                                     completion_queue));
+  WorkerRuntime runtime(
+      /*num_workers=*/1,
+      MakeChannels(ready_queue, request_queue, completion_queue));
   runtime.Start();
 
   bool destroyed = false;
@@ -200,9 +200,9 @@ TEST(WorkerRuntime, StartTwiceIsIgnored) {
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   ThreadSafeQueue<PendingEval> request_queue;
   ThreadSafeQueue<CompletedSearch> completion_queue;
-  WorkerRuntime runtime(/*num_workers=*/1,
-                        MakeChannels(ready_queue, request_queue,
-                                     completion_queue));
+  WorkerRuntime runtime(
+      /*num_workers=*/1,
+      MakeChannels(ready_queue, request_queue, completion_queue));
   runtime.Start();
   runtime.Start();
 

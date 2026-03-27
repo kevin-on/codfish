@@ -329,13 +329,11 @@ TEST(SearchCoordinator, RunGamesRejectsSecondCallAtRuntime) {
       .num_games = 1,
       .raw_output_dir = temp_dir.path,
   });
-  EXPECT_THROW(
-      coordinator.RunGames(
-          RunGamesOptions{
-              .num_games = 1,
-              .raw_output_dir = temp_dir.path,
-          }),
-      std::logic_error);
+  EXPECT_THROW(coordinator.RunGames(RunGamesOptions{
+                   .num_games = 1,
+                   .raw_output_dir = temp_dir.path,
+               }),
+               std::logic_error);
 }
 
 TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
@@ -353,16 +351,14 @@ TEST(SearchCoordinator, RunGamesStopsStartedRuntimesWhenStartupThrows) {
                   .flush_timeout = 0ms,
               },
       },
-      std::make_unique<ThrowOnSecondCreateTaskFactory>(&probe),
-      backend, &encoder);
+      std::make_unique<ThrowOnSecondCreateTaskFactory>(&probe), backend,
+      &encoder);
 
-  EXPECT_THROW(
-      coordinator.RunGames(
-          RunGamesOptions{
-              .num_games = 2,
-              .raw_output_dir = temp_dir.path,
-          }),
-      std::runtime_error);
+  EXPECT_THROW(coordinator.RunGames(RunGamesOptions{
+                   .num_games = 2,
+                   .raw_output_dir = temp_dir.path,
+               }),
+               std::runtime_error);
 
   EXPECT_EQ(probe.created.load(), 1);
   EXPECT_EQ(probe.destroyed.load(), 1);

@@ -14,8 +14,8 @@
 #include <utility>
 #include <vector>
 
-#include "chess/position.h"
 #include "actor/mcts/output/raw_chunk_format.h"
+#include "chess/position.h"
 
 namespace engine {
 namespace {
