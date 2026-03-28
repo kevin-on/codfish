@@ -12,3 +12,20 @@ Read these before diving into `src/actor/mcts/`:
   - Why self-play output is stored as raw game data and what downstream readers are expected to do.
 
 Do not use `docs/chess_engine_dev_spec.md` as an MCTS runtime reference.
+
+Read these before diving into `src/learner/` or `python/codfish/learner/`:
+
+- `docs/learner_architecture.md`
+  - Learner subsystem shape, boundaries, and ownership split.
+- `docs/learner_contracts.md`
+  - Non-obvious learner invariants across storage, encoding, replay, and checkpoints.
+- `docs/learner_encoding_and_replay.md`
+  - How raw chunk data becomes dense learner tensors and how replay is rebuilt.
+- `docs/learner_runloop_notes.md`
+  - Orchestrated learner lifecycle, bootstrap/resume rules, and failure handling.
+
+Read this before touching `python/codfish/orchestrator.py`, `python/codfish/artifacts.py`,
+or other cross-system flow:
+
+- `docs/project_architecture.md`
+  - End-to-end project loop from checkpoint to artifact to self-play to learner and back.
