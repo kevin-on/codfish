@@ -179,12 +179,15 @@ def export_model_to_aoti_artifact(
             model_config, "input_channels", "model_config"
         )
         policy_size = require_positive_int(model_config, "policy_size", "model_config")
+        # torch.export can specialize a named dynamic batch dim when the
+        # example input uses batch size 1. Export from batch size 2 to keep the
+        # leading dimension truly dynamic for inference batching.
         example_input = torch.zeros(
-            (1, input_channels, 8, 8),
+            (2, input_channels, 8, 8),
             dtype=torch.float32,
             device="cuda",
         )
-        dynamic_batch = torch.export.Dim("batch", min=1)
+        dynamic_batch = torch.export.Dim("batch", min=2, max=65535)
         with torch.no_grad():
             exported_program = torch.export.export(
                 wrapper,
