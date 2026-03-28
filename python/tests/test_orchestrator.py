@@ -1353,8 +1353,9 @@ class OrchestratorTest(unittest.TestCase):
                 if "eval/rating" in payload or "eval/ratings_table" in payload
             ]
             self.assertEqual(len(eval_logs), 1)
-            self.assertEqual(eval_logs[0]["iteration"], 4)
             self.assertEqual(eval_logs[0]["eval/rating"], 4.0)
+            self.assertNotIn("iteration", eval_logs[0])
+            self.assertNotIn("global_step", eval_logs[0])
             ratings_table = eval_logs[0]["eval/ratings_table"]
             self.assertEqual(
                 ratings_table.columns,

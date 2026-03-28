@@ -302,15 +302,10 @@ class _OrchestratorWandbSession:
     def log_eval_ratings(
         self,
         *,
-        iteration: int,
-        global_step: int,
         current_rating: float | None,
         ratings_rows: list[dict[str, object]],
     ) -> None:
-        payload: dict[str, object] = {
-            "global_step": global_step,
-            "iteration": iteration,
-        }
+        payload: dict[str, object] = {}
         if current_rating is not None:
             payload["eval/rating"] = current_rating
 
@@ -466,8 +461,6 @@ def run_selfplay_update_loop(
                 wandb_session.log_iteration(report)
                 if eval_result is not None:
                     wandb_session.log_eval_ratings(
-                        iteration=report.iteration,
-                        global_step=report.ending_global_step,
                         current_rating=eval_result.current_rating,
                         ratings_rows=eval_result.ratings_rows,
                     )
