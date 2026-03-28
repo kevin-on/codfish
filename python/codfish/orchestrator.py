@@ -213,7 +213,6 @@ class _EvalSnapshot:
 @dataclass(slots=True)
 class _EvalRatingsResult:
     current_snapshot: _EvalSnapshot
-    current_rating: float | None
     ratings_rows: list[dict[str, object]]
     ratings_csv_path: Path
 
@@ -302,16 +301,13 @@ class _OrchestratorWandbSession:
     def log_eval_ratings(
         self,
         *,
-        current_rating: float | None,
         ratings_rows: list[dict[str, object]],
     ) -> None:
         payload: dict[str, object] = {}
-        if current_rating is not None:
-            payload["eval/rating"] = current_rating
 
         table_ctor = getattr(self._wandb, "Table", None)
         if callable(table_ctor):
-            payload["eval/ratings_table"] = table_ctor(
+            ratings_table = table_ctor(
                 columns=["snapshot", "iteration", "global_step", "rating"],
                 data=[
                     [
@@ -323,6 +319,16 @@ class _OrchestratorWandbSession:
                     for row in ratings_rows
                 ],
             )
+            payload["eval/ratings_table"] = ratings_table
+            plot_namespace = getattr(self._wandb, "plot", None)
+            line_plot = getattr(plot_namespace, "line", None)
+            if callable(line_plot):
+                payload["eval/ratings_curve"] = line_plot(
+                    table=ratings_table,
+                    x="iteration",
+                    y="rating",
+                    title="Eval Ratings",
+                )
         else:
             payload["eval/ratings"] = [dict(row) for row in ratings_rows]
         self._run.log(payload)
@@ -461,7 +467,6 @@ def run_selfplay_update_loop(
                 wandb_session.log_iteration(report)
                 if eval_result is not None:
                     wandb_session.log_eval_ratings(
-                        current_rating=eval_result.current_rating,
                         ratings_rows=eval_result.ratings_rows,
                     )
             reports.append(report)
@@ -863,17 +868,8 @@ def _rebuild_eval_ratings(
         ratings_text_path=ratings_text_path,
         ratings_csv_path=_run_layout.eval_ratings_csv_path(run_root),
     )
-    current_rating = next(
-        (
-            float(row["rating"])
-            for row in ratings_rows
-            if row["snapshot"] == current_snapshot.stem
-        ),
-        None,
-    )
     return _EvalRatingsResult(
         current_snapshot=current_snapshot,
-        current_rating=current_rating,
         ratings_rows=ratings_rows,
         ratings_csv_path=_run_layout.eval_ratings_csv_path(run_root),
     )

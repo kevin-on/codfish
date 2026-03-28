@@ -306,11 +306,52 @@ class _FakeWandbTable:
         self.data = [list(row) for row in data]
 
 
+class _FakeWandbLinePlot:
+    def __init__(
+        self,
+        *,
+        table: _FakeWandbTable,
+        x: str,
+        y: str,
+        stroke: str | None = None,
+        title: str = "",
+        split_table: bool = False,
+    ) -> None:
+        self.table = table
+        self.x = x
+        self.y = y
+        self.stroke = stroke
+        self.title = title
+        self.split_table = split_table
+
+
+class _FakeWandbPlotNamespace:
+    @staticmethod
+    def line(
+        *,
+        table: _FakeWandbTable,
+        x: str,
+        y: str,
+        stroke: str | None = None,
+        title: str = "",
+        split_table: bool = False,
+    ) -> _FakeWandbLinePlot:
+        return _FakeWandbLinePlot(
+            table=table,
+            x=x,
+            y=y,
+            stroke=stroke,
+            title=title,
+            split_table=split_table,
+        )
+
+
 class _FakeWandbModule:
     def __init__(self, run_id: str = "fake-wandb-run-id") -> None:
         self.init_calls: list[dict[str, object]] = []
         self.run = _FakeWandbRun(run_id)
         self.Table = _FakeWandbTable
+        self.plot = _FakeWandbPlotNamespace()
 
     def init(self, **kwargs: object) -> _FakeWandbRun:
         self.init_calls.append(dict(kwargs))
@@ -1350,10 +1391,9 @@ class OrchestratorTest(unittest.TestCase):
             eval_logs = [
                 payload
                 for payload in fake_wandb.run.log_calls
-                if "eval/rating" in payload or "eval/ratings_table" in payload
+                if "eval/ratings_curve" in payload or "eval/ratings_table" in payload
             ]
             self.assertEqual(len(eval_logs), 1)
-            self.assertEqual(eval_logs[0]["eval/rating"], 4.0)
             self.assertNotIn("iteration", eval_logs[0])
             self.assertNotIn("global_step", eval_logs[0])
             ratings_table = eval_logs[0]["eval/ratings_table"]
@@ -1368,6 +1408,11 @@ class OrchestratorTest(unittest.TestCase):
                     ["iter_000004_step_000000004", 4, 4, 4.0],
                 ],
             )
+            ratings_curve = eval_logs[0]["eval/ratings_curve"]
+            self.assertIs(ratings_curve.table, ratings_table)
+            self.assertEqual(ratings_curve.x, "iteration")
+            self.assertEqual(ratings_curve.y, "rating")
+            self.assertEqual(ratings_curve.title, "Eval Ratings")
 
     def test_eval_phase_skips_existing_match_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
