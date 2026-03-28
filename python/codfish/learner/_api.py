@@ -186,3 +186,38 @@ def run_aoti_selfplay(
         c_visit,
         c_scale,
     )
+
+
+def run_aoti_match(
+    model_package_path_a: str | os.PathLike[str],
+    model_package_path_b: str | os.PathLike[str],
+    *,
+    player_name_a: str,
+    player_name_b: str,
+    input_channels: int,
+    policy_size: int,
+    output_pgn_path: str | os.PathLike[str],
+    num_workers: int,
+    num_games: int,
+    num_action: int,
+    num_simulation: int,
+    c_puct: float,
+    c_visit: float,
+    c_scale: float,
+) -> None:
+    _native.run_aoti_match(
+        os.fspath(model_package_path_a),
+        os.fspath(model_package_path_b),
+        player_name_a,
+        player_name_b,
+        input_channels,
+        policy_size,
+        os.fspath(output_pgn_path),
+        num_workers,
+        num_games,
+        num_action,
+        num_simulation,
+        c_puct,
+        c_visit,
+        c_scale,
+    )

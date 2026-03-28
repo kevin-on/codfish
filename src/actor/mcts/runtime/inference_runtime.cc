@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -17,7 +18,8 @@ struct InflightEval {
   std::unique_ptr<GameTask> task;
   EvalRequest request;
   EvalResponse response;
-  std::size_t next_item = 0;
+  std::vector<bool> completed_items;
+  std::size_t remaining_items = 0;
 };
 
 struct RouteEntry {
@@ -36,6 +38,8 @@ InflightEval MakeInflight(PendingEval pending) {
       .request = std::move(pending.request),
   };
   inflight.response.items.resize(inflight.request.items.size());
+  inflight.completed_items.assign(inflight.request.items.size(), false);
+  inflight.remaining_items = inflight.request.items.size();
   return inflight;
 }
 
@@ -48,10 +52,13 @@ void GatherUntil(ThreadSafeQueue<PendingEval>& request_queue,
   }
 }
 
-int BuildBatch(
-    std::deque<InflightEval>* inflight, int max_batch_size,
-    std::vector<RouteEntry>* route,
+int BuildBatchForSlot(
+    std::deque<InflightEval>* inflight, int slot, int slot_count,
+    int max_batch_size, std::vector<RouteEntry>* route,
     std::vector<std::span<const lczero::Position>>* batch_positions) {
+  assert(slot >= 0);
+  assert(slot < slot_count);
+  assert(slot_count > 0);
   assert(max_batch_size > 0);
 
   route->clear();
@@ -61,12 +68,17 @@ int BuildBatch(
 
   int batch_size = 0;
   for (InflightEval& eval : *inflight) {
-    while (batch_size < max_batch_size &&
-           eval.next_item < eval.request.items.size()) {
-      const std::size_t item_idx = eval.next_item++;
+    for (std::size_t item_idx = 0; item_idx < eval.request.items.size();
+         ++item_idx) {
+      if (batch_size == max_batch_size) break;
+      if (eval.completed_items[item_idx]) continue;
+
       const EvalRequestItem& item = eval.request.items[item_idx];
       assert(item.len > 0);
       assert(item.len <= item.positions.size());
+      const int requested_slot = eval.task->BackendSlotForRequestItem(item);
+      if (requested_slot < 0 || requested_slot >= slot_count) continue;
+      if (requested_slot != slot) continue;
 
       route->push_back(RouteEntry{
           .inflight = &eval,
@@ -79,9 +91,6 @@ int BuildBatch(
     if (batch_size == max_batch_size) break;
   }
 
-  assert(batch_size > 0);
-  assert(static_cast<std::size_t>(batch_size) == route->size());
-  assert(static_cast<std::size_t>(batch_size) == batch_positions->size());
   return batch_size;
 }
 
@@ -108,6 +117,9 @@ void ScatterBatch(const std::vector<RouteEntry>& route,
     const std::size_t wdl_begin = batch_idx * 3;
     item.wdl_probs.assign(outputs.wdl_probs.begin() + wdl_begin,
                           outputs.wdl_probs.begin() + wdl_begin + 3);
+
+    entry.inflight->completed_items[entry.request_item_idx] = true;
+    --entry.inflight->remaining_items;
   }
 }
 
@@ -117,13 +129,26 @@ InferenceRuntime::InferenceRuntime(InferenceChannels channels,
                                    std::shared_ptr<InferenceBackend> backend,
                                    const FeatureEncoder* encoder,
                                    InferenceRuntimeOptions options)
+    : InferenceRuntime(channels,
+                       std::vector<std::shared_ptr<InferenceBackend>>{
+                           std::move(backend),
+                       },
+                       encoder, options) {}
+
+InferenceRuntime::InferenceRuntime(
+    InferenceChannels channels,
+    std::vector<std::shared_ptr<InferenceBackend>> backends,
+    const FeatureEncoder* encoder, InferenceRuntimeOptions options)
     : channels_(channels),
-      backend_(std::move(backend)),
+      backends_(std::move(backends)),
       encoder_(encoder),
       options_(options) {
   assert(channels_.request_queue != nullptr);
   assert(channels_.ready_queue != nullptr);
-  assert(backend_ != nullptr);
+  assert(!backends_.empty());
+  for (const auto& backend : backends_) {
+    assert(backend != nullptr);
+  }
   assert(encoder_ != nullptr);
   assert(options_.max_batch_size > 0);
   assert(options_.flush_timeout.count() >= 0);
@@ -136,8 +161,10 @@ void InferenceRuntime::Start() {
   if (started_) return;
   if (stopped_) return;
 
-  const Status status = backend_->Load();
-  assert(status.ok());
+  for (const auto& backend : backends_) {
+    const Status status = backend->Load();
+    assert(status.ok());
+  }
 
   started_ = true;
   inference_thread_ = std::thread(&InferenceRuntime::RunLoop, this);
@@ -187,26 +214,38 @@ void InferenceRuntime::RunLoop() {
                   &inflight);
     }
 
-    const int batch_size = BuildBatch(&inflight, options_.max_batch_size,
-                                      &route, &batch_positions);
-    encoder_->EncodeBatch(
-        batch_positions,
-        std::span<uint8_t>(
-            planes_buffer.data(),
-            static_cast<std::size_t>(batch_size) * kInputElements));
+    bool ran_batch = false;
+    const int slot_count = static_cast<int>(backends_.size());
+    for (int slot = 0; slot < slot_count; ++slot) {
+      const int batch_size =
+          BuildBatchForSlot(&inflight, slot, slot_count,
+                            options_.max_batch_size, &route, &batch_positions);
+      if (batch_size == 0) continue;
 
-    const Status status = backend_->Run(
-        InferenceBatch{
-            .planes = planes_buffer.data(),
-            .batch_size = batch_size,
-        },
-        &outputs);
-    assert(status.ok());
+      ran_batch = true;
+      encoder_->EncodeBatch(
+          batch_positions,
+          std::span<uint8_t>(
+              planes_buffer.data(),
+              static_cast<std::size_t>(batch_size) * kInputElements));
 
-    ScatterBatch(route, outputs, lczero::kPolicySize);
+      const Status status = backends_[static_cast<std::size_t>(slot)]->Run(
+          InferenceBatch{
+              .planes = planes_buffer.data(),
+              .batch_size = batch_size,
+          },
+          &outputs);
+      assert(status.ok());
 
-    while (!inflight.empty() && inflight.front().next_item ==
-                                    inflight.front().request.items.size()) {
+      ScatterBatch(route, outputs, lczero::kPolicySize);
+    }
+
+    if (!ran_batch) {
+      throw std::runtime_error(
+          "inference runtime found unroutable eval request");
+    }
+
+    while (!inflight.empty() && inflight.front().remaining_items == 0) {
       InflightEval completed = std::move(inflight.front());
       inflight.pop_front();
       completed.task->response.emplace(std::move(completed.response));

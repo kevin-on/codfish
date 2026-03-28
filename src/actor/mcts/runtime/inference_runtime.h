@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "actor/mcts/primitives/thread_safe_queue.h"
 #include "actor/mcts/runtime/task_types.h"
@@ -28,6 +29,10 @@ class InferenceRuntime {
                    std::shared_ptr<InferenceBackend> backend,
                    const FeatureEncoder* encoder,
                    InferenceRuntimeOptions options);
+  InferenceRuntime(InferenceChannels channels,
+                   std::vector<std::shared_ptr<InferenceBackend>> backends,
+                   const FeatureEncoder* encoder,
+                   InferenceRuntimeOptions options);
   ~InferenceRuntime();
 
   InferenceRuntime(const InferenceRuntime&) = delete;
@@ -40,7 +45,7 @@ class InferenceRuntime {
   void RunLoop();
 
   InferenceChannels channels_;
-  std::shared_ptr<InferenceBackend> backend_;
+  std::vector<std::shared_ptr<InferenceBackend>> backends_;
   const FeatureEncoder* encoder_ = nullptr;
   InferenceRuntimeOptions options_;
   bool started_ = false;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import json
 import os
 import pathlib
@@ -14,6 +15,7 @@ from unittest import mock
 
 import torch
 
+from codfish import _run_layout
 from codfish._run_layout import partial_path
 from codfish.artifacts import (
     AOTI_ARTIFACT_FORMAT_VERSION,
@@ -42,6 +44,7 @@ from codfish.learner._checkpoint import (
     load_training_checkpoint,
 )
 from codfish.orchestrator import (
+    EvalConfig,
     NativeSelfPlayLauncher,
     SelfPlayConfig,
     run_selfplay_update_loop,
@@ -297,10 +300,17 @@ class _FakeWandbRun:
         self.finish_calls += 1
 
 
+class _FakeWandbTable:
+    def __init__(self, *, columns: list[str], data: list[list[object]]) -> None:
+        self.columns = list(columns)
+        self.data = [list(row) for row in data]
+
+
 class _FakeWandbModule:
     def __init__(self, run_id: str = "fake-wandb-run-id") -> None:
         self.init_calls: list[dict[str, object]] = []
         self.run = _FakeWandbRun(run_id)
+        self.Table = _FakeWandbTable
 
     def init(self, **kwargs: object) -> _FakeWandbRun:
         self.init_calls.append(dict(kwargs))
@@ -336,6 +346,27 @@ class _FakeLearnerRunner:
         historical = [pathlib.Path(path) for path in historical_chunk_paths]
         new = [pathlib.Path(path) for path in new_chunk_paths]
         self.run_calls.append((historical, new, iteration))
+        checkpoint_dir = pathlib.Path(self.config.checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        latest_checkpoint_path = _run_layout.latest_checkpoint_path(checkpoint_dir)
+        snapshot_path = _run_layout.snapshot_path(
+            checkpoint_dir,
+            iteration=iteration,
+            global_step=iteration,
+        )
+        payload = build_training_checkpoint_payload(
+            model_state_dict=self.model.state_dict(),
+            optimizer_state_dict={},
+            global_learner_step=iteration,
+            iteration=iteration,
+            model_name=self.model_spec.name,
+            model_config=self.model_spec.config,
+            trainer_config=self.trainer_config,
+            wandb_run_id=self.trainer.wandb_run_id,
+            replay_sampler_rng_state=None,
+        )
+        atomic_torch_save(payload, latest_checkpoint_path)
+        atomic_torch_save(payload, snapshot_path)
         return TrainIterationReport(
             iteration=iteration,
             starting_global_step=iteration - 1,
@@ -346,8 +377,8 @@ class _FakeLearnerRunner:
             mean_total_loss=1.0,
             mean_policy_loss=0.5,
             mean_wdl_loss=0.5,
-            latest_checkpoint_path=pathlib.Path(f"/tmp/latest-{iteration}.pt"),
-            snapshot_path=pathlib.Path(f"/tmp/snapshot-{iteration}.pt"),
+            latest_checkpoint_path=latest_checkpoint_path,
+            snapshot_path=snapshot_path,
         )
 
     def close(self) -> None:
@@ -364,6 +395,42 @@ def _clone_state_dict(
     state_dict: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
     return {key: value.detach().cpu().clone() for key, value in state_dict.items()}
+
+
+def _eval_config(
+    *,
+    snapshot_interval: int = 1,
+    match_games: int = 2,
+    num_workers: int = 1,
+    num_action: int = 4,
+    num_simulation: int = 8,
+    c_puct: float = 1.0,
+    c_visit: float = 1.0,
+    c_scale: float = 1.0,
+    window_offsets: tuple[int, ...] = (1, 3, 10),
+) -> EvalConfig:
+    return EvalConfig(
+        snapshot_interval=snapshot_interval,
+        match_games=match_games,
+        num_workers=num_workers,
+        num_action=num_action,
+        num_simulation=num_simulation,
+        c_puct=c_puct,
+        c_visit=c_visit,
+        c_scale=c_scale,
+        window_offsets=window_offsets,
+    )
+
+
+def _wandb_import_side_effect(fake_wandb: _FakeWandbModule):
+    real_import_module = importlib.import_module
+
+    def side_effect(name: str, package: str | None = None):
+        if name == "wandb":
+            return fake_wandb
+        return real_import_module(name, package)
+
+    return side_effect
 
 
 class OrchestratorTest(unittest.TestCase):
@@ -1006,8 +1073,8 @@ class OrchestratorTest(unittest.TestCase):
                     new=fake_run_selfplay,
                 ),
                 mock.patch(
-                    "importlib.import_module",
-                    return_value=fake_wandb,
+                    "codfish.orchestrator.importlib.import_module",
+                    side_effect=_wandb_import_side_effect(fake_wandb),
                 ),
             ):
                 run_selfplay_update_loop(
@@ -1066,8 +1133,8 @@ class OrchestratorTest(unittest.TestCase):
                     new=fake_run_selfplay,
                 ),
                 mock.patch(
-                    "importlib.import_module",
-                    return_value=fake_wandb,
+                    "codfish.orchestrator.importlib.import_module",
+                    side_effect=_wandb_import_side_effect(fake_wandb),
                 ),
             ):
                 run_selfplay_update_loop(
@@ -1107,8 +1174,8 @@ class OrchestratorTest(unittest.TestCase):
                     new=fake_run_selfplay,
                 ),
                 mock.patch(
-                    "importlib.import_module",
-                    return_value=fake_wandb,
+                    "codfish.orchestrator.importlib.import_module",
+                    side_effect=_wandb_import_side_effect(fake_wandb),
                 ),
             ):
                 run_selfplay_update_loop(
@@ -1128,6 +1195,258 @@ class OrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(checkpoint.wandb_run_id, "persisted-run-id")
+
+    def test_eval_phase_runs_matches_rebuilds_ratings_and_logs_wandb(self) -> None:
+        fake_wandb = _FakeWandbModule()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            match_calls: list[tuple[str, str, pathlib.Path]] = []
+            ordo_calls: list[list[str]] = []
+
+            def fake_run_selfplay(
+                launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
+                output_dir: pathlib.Path,
+            ) -> None:
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
+
+            def fake_run_match(
+                model_package_path_a: str | os.PathLike[str],
+                model_package_path_b: str | os.PathLike[str],
+                *,
+                player_name_a: str,
+                player_name_b: str,
+                input_channels: int,
+                policy_size: int,
+                output_pgn_path: str | os.PathLike[str],
+                num_workers: int,
+                num_games: int,
+                num_action: int,
+                num_simulation: int,
+                c_puct: float,
+                c_visit: float,
+                c_scale: float,
+            ) -> None:
+                del (
+                    model_package_path_a,
+                    model_package_path_b,
+                    input_channels,
+                    policy_size,
+                    num_workers,
+                    num_games,
+                    num_action,
+                    num_simulation,
+                    c_puct,
+                    c_visit,
+                    c_scale,
+                )
+                output_path = pathlib.Path(output_pgn_path)
+                match_calls.append((player_name_a, player_name_b, output_path))
+                output_path.write_text(
+                    (
+                        f'[Event "Eval"]\n[White "{player_name_a}"]\n'
+                        f'[Black "{player_name_b}"]\n[Result "1-0"]\n\n1-0\n\n'
+                        f'[Event "Eval"]\n[White "{player_name_b}"]\n'
+                        f'[Black "{player_name_a}"]\n[Result "0-1"]\n\n0-1\n'
+                    ),
+                    encoding="utf-8",
+                )
+
+            def fake_ordo_run(
+                cmd: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                text: bool,
+            ) -> subprocess.CompletedProcess[str]:
+                self.assertTrue(check)
+                self.assertTrue(capture_output)
+                self.assertTrue(text)
+                ordo_calls.append(list(cmd))
+                all_games_path = pathlib.Path(cmd[cmd.index("-p") + 1])
+                ratings_path = pathlib.Path(cmd[cmd.index("-o") + 1])
+                player_names = sorted(
+                    {
+                        line.split('"')[1]
+                        for line in all_games_path.read_text(
+                            encoding="utf-8"
+                        ).splitlines()
+                        if line.startswith("[White ") or line.startswith("[Black ")
+                    }
+                )
+                rows = []
+                for index, player_name in enumerate(player_names, start=1):
+                    iteration = int(player_name.split("_")[1])
+                    rows.append(f"{index:3d} {player_name} : {float(iteration):.1f}")
+                ratings_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            with (
+                self._patched_aoti(),
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.run_aoti_match",
+                    side_effect=fake_run_match,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.subprocess.run",
+                    side_effect=fake_ordo_run,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.importlib.import_module",
+                    side_effect=_wandb_import_side_effect(fake_wandb),
+                ),
+            ):
+                run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=4,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=_toy_model_spec(),
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=False),
+                    wandb_config=WandbConfig(project="proj", name="eval"),
+                    eval_config=_eval_config(
+                        snapshot_interval=2,
+                        match_games=2,
+                        window_offsets=(1,),
+                    ),
+                )
+
+            match_path = (
+                run_root
+                / "eval"
+                / "matches"
+                / "iter_000002_step_000000002__iter_000004_step_000000004.pgn"
+            )
+            all_games_path = run_root / "eval" / "ordo" / "all_games.pgn"
+            ratings_csv_path = run_root / "eval" / "ordo" / "ratings.csv"
+            self.assertEqual(
+                [call[:2] for call in match_calls],
+                [
+                    (
+                        "iter_000002_step_000000002",
+                        "iter_000004_step_000000004",
+                    )
+                ],
+            )
+            self.assertTrue(match_path.exists())
+            self.assertTrue(ratings_csv_path.exists())
+            self.assertEqual(
+                all_games_path.read_text(encoding="utf-8"),
+                match_path.read_text(encoding="utf-8") + "\n",
+            )
+            self.assertEqual(len(ordo_calls), 1)
+            eval_logs = [
+                payload
+                for payload in fake_wandb.run.log_calls
+                if "eval/rating" in payload or "eval/ratings_table" in payload
+            ]
+            self.assertEqual(len(eval_logs), 1)
+            self.assertEqual(eval_logs[0]["iteration"], 4)
+            self.assertEqual(eval_logs[0]["eval/rating"], 4.0)
+            ratings_table = eval_logs[0]["eval/ratings_table"]
+            self.assertEqual(
+                ratings_table.columns,
+                ["snapshot", "iteration", "global_step", "rating"],
+            )
+            self.assertEqual(
+                ratings_table.data,
+                [
+                    ["iter_000002_step_000000002", 2, 2, 2.0],
+                    ["iter_000004_step_000000004", 4, 4, 4.0],
+                ],
+            )
+
+    def test_eval_phase_skips_existing_match_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            existing_match_path = (
+                run_root
+                / "eval"
+                / "matches"
+                / "iter_000002_step_000000002__iter_000004_step_000000004.pgn"
+            )
+            existing_match_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_match_path.write_text(
+                '[Event "Eval"]\n[White "iter_000002_step_000000002"]\n'
+                '[Black "iter_000004_step_000000004"]\n[Result "1/2-1/2"]\n\n1/2-1/2\n',
+                encoding="utf-8",
+            )
+
+            def fake_run_selfplay(
+                launcher: NativeSelfPlayLauncher,
+                artifact_dir: pathlib.Path,
+                output_dir: pathlib.Path,
+            ) -> None:
+                _write_chunk_file(
+                    output_dir / "games-000001.bin", [_canonical_raw_game()]
+                )
+
+            def fake_ordo_run(
+                cmd: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                text: bool,
+            ) -> subprocess.CompletedProcess[str]:
+                del check, capture_output, text
+                ratings_path = pathlib.Path(cmd[cmd.index("-o") + 1])
+                ratings_path.write_text(
+                    "  1 iter_000002_step_000000002 : 2.0\n"
+                    "  2 iter_000004_step_000000004 : 4.0\n",
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            with (
+                self._patched_aoti(),
+                mock.patch(
+                    "codfish.orchestrator.LearnerRunner",
+                    _FakeLearnerRunner,
+                ),
+                mock.patch.object(
+                    NativeSelfPlayLauncher,
+                    "run_selfplay",
+                    new=fake_run_selfplay,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.run_aoti_match",
+                    side_effect=AssertionError(
+                        "existing eval match should have been skipped"
+                    ),
+                ),
+                mock.patch(
+                    "codfish.orchestrator.subprocess.run",
+                    side_effect=fake_ordo_run,
+                ),
+            ):
+                run_selfplay_update_loop(
+                    run_root=run_root,
+                    num_iterations=4,
+                    selfplay_config=_selfplay_config(),
+                    model_spec=_toy_model_spec(),
+                    trainer_config=_trainer_config(),
+                    replay_buffer_config=_replay_config(),
+                    runner_config=_runner_config(run_root, resume=False),
+                    eval_config=_eval_config(
+                        snapshot_interval=2,
+                        match_games=2,
+                        window_offsets=(1,),
+                    ),
+                )
+
+            self.assertTrue((run_root / "eval" / "ordo" / "ratings.csv").exists())
 
     def test_run_selfplay_update_loop_cleans_partial_dir_after_selfplay_failure(
         self,

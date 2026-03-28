@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -104,16 +105,17 @@ TEST(GameRunner, TerminalResultBuildsCompletedGameAndHandsItOff) {
   ThreadSafeQueue<CompletedSearch> completion_queue;
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   ThreadSafeQueue<CompletedGame> completed_game_queue;
+  std::atomic<int> completed_callbacks{0};
   GameRunner runner(GameRunnerChannels{
       .completion_queue = &completion_queue,
       .ready_queue = &ready_queue,
       .completed_game_queue = &completed_game_queue,
+      .on_completed_game = [&completed_callbacks] { ++completed_callbacks; },
   });
   runner.Start();
 
-  auto searcher = std::make_unique<CommitRecordingSearcher>();
-  CommitRecordingSearcher* searcher_raw = searcher.get();
-  auto task = MakeTask(std::move(searcher), TaskState::kNew);
+  auto task =
+      MakeTask(std::make_unique<CommitRecordingSearcher>(), TaskState::kNew);
 
   const lczero::Move move = ParseMove("d2d4");
   task->training_sample_drafts.push_back(TrainingSampleDraft{
@@ -132,7 +134,7 @@ TEST(GameRunner, TerminalResultBuildsCompletedGameAndHandsItOff) {
 
   std::optional<CompletedGame> completed_game = completed_game_queue.pop();
   ASSERT_TRUE(completed_game.has_value());
-  EXPECT_EQ(searcher_raw->commit_calls(), 0);
+  EXPECT_EQ(completed_callbacks.load(), 1);
   EXPECT_EQ(completed_game->game_result, lczero::GameResult::WHITE_WON);
   ASSERT_EQ(completed_game->sample_drafts.size(), 1u);
   EXPECT_EQ(completed_game->sample_drafts[0].root_history.GetLength(), 1);
@@ -141,6 +143,10 @@ TEST(GameRunner, TerminalResultBuildsCompletedGameAndHandsItOff) {
   EXPECT_EQ(completed_game->sample_drafts[0].legal_moves[0], move);
   ASSERT_EQ(completed_game->sample_drafts[0].improved_policy.size(), 1u);
   EXPECT_FLOAT_EQ(completed_game->sample_drafts[0].improved_policy[0], 0.75f);
+  EXPECT_FALSE(ready_queue
+                   .pop_until(std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(50))
+                   .has_value());
 
   ready_queue.close();
   runner.Stop();

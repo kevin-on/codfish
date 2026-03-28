@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib
 import os
+import re
 import shutil
+import subprocess
 import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -28,7 +31,7 @@ from .learner import (
     WandbConfig,
     make_small_alphazero_resnet_spec,
 )
-from .learner._api import get_model_io_shape, run_aoti_selfplay
+from .learner._api import get_model_io_shape, run_aoti_match, run_aoti_selfplay
 from .learner._checkpoint import (
     _trainer_config_payload,
     atomic_torch_save,
@@ -68,6 +71,45 @@ class SelfPlayConfig:
             raise ValueError("c_scale must be non-negative")
 
 
+@dataclass(slots=True)
+class EvalConfig:
+    snapshot_interval: int
+    match_games: int
+    num_workers: int
+    num_action: int
+    num_simulation: int
+    c_puct: float
+    c_visit: float
+    c_scale: float
+    window_offsets: tuple[int, ...] = (1, 3, 10)
+
+    def __post_init__(self) -> None:
+        if self.snapshot_interval <= 0:
+            raise ValueError("snapshot_interval must be positive")
+        if self.match_games <= 0:
+            raise ValueError("match_games must be positive")
+        if self.match_games % 2 != 0:
+            raise ValueError("match_games must be even")
+        if self.num_workers <= 0:
+            raise ValueError("num_workers must be positive")
+        if self.num_action <= 0:
+            raise ValueError("num_action must be positive")
+        if self.num_simulation <= 0:
+            raise ValueError("num_simulation must be positive")
+        if self.c_puct < 0:
+            raise ValueError("c_puct must be non-negative")
+        if self.c_visit < 0:
+            raise ValueError("c_visit must be non-negative")
+        if self.c_scale < 0:
+            raise ValueError("c_scale must be non-negative")
+        if not self.window_offsets:
+            raise ValueError("window_offsets must be non-empty")
+        if any(offset <= 0 for offset in self.window_offsets):
+            raise ValueError("window_offsets must contain only positive values")
+        if len(set(self.window_offsets)) != len(self.window_offsets):
+            raise ValueError("window_offsets must be unique")
+
+
 class NativeSelfPlayLauncher:
     def __init__(self, config: SelfPlayConfig) -> None:
         self.config = config
@@ -105,6 +147,81 @@ class NativeSelfPlayLauncher:
         )
 
 
+class NativeEvalLauncher:
+    def __init__(self, config: EvalConfig) -> None:
+        self.config = config
+
+    def run_match(
+        self,
+        artifact_dir_path_a: str | os.PathLike[str],
+        artifact_dir_path_b: str | os.PathLike[str],
+        *,
+        player_name_a: str,
+        player_name_b: str,
+        output_pgn_path: str | os.PathLike[str],
+    ) -> None:
+        artifact_path_a = Path(artifact_dir_path_a)
+        artifact_path_b = Path(artifact_dir_path_b)
+        manifest_a = read_aoti_artifact_manifest(artifact_path_a)
+        manifest_b = read_aoti_artifact_manifest(artifact_path_b)
+        if manifest_a.input_channels != manifest_b.input_channels:
+            raise ValueError("eval artifacts must agree on input_channels")
+        if manifest_a.policy_size != manifest_b.policy_size:
+            raise ValueError("eval artifacts must agree on policy_size")
+
+        model_package_path_a = artifact_path_a / manifest_a.package_file
+        model_package_path_b = artifact_path_b / manifest_b.package_file
+        if not model_package_path_a.is_file():
+            raise FileNotFoundError(
+                f"artifact package file does not exist: {model_package_path_a}"
+            )
+        if not model_package_path_b.is_file():
+            raise FileNotFoundError(
+                f"artifact package file does not exist: {model_package_path_b}"
+            )
+
+        output_path = Path(output_pgn_path)
+        if output_path.exists():
+            raise FileExistsError(f"eval output PGN already exists: {output_path}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        run_aoti_match(
+            model_package_path_a,
+            model_package_path_b,
+            player_name_a=player_name_a,
+            player_name_b=player_name_b,
+            input_channels=manifest_a.input_channels,
+            policy_size=manifest_a.policy_size,
+            output_pgn_path=output_path,
+            num_workers=self.config.num_workers,
+            num_games=self.config.match_games,
+            num_action=self.config.num_action,
+            num_simulation=self.config.num_simulation,
+            c_puct=self.config.c_puct,
+            c_visit=self.config.c_visit,
+            c_scale=self.config.c_scale,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class _EvalSnapshot:
+    path: Path
+    stem: str
+    iteration: int
+    global_step: int
+
+
+@dataclass(slots=True)
+class _EvalRatingsResult:
+    current_snapshot: _EvalSnapshot
+    current_rating: float | None
+    ratings_rows: list[dict[str, object]]
+    ratings_csv_path: Path
+
+
+_SNAPSHOT_STEM_RE = re.compile(r"^iter_(\d+)_step_(\d+)$")
+_ORDO_RATING_LINE_RE = re.compile(r"^\s*\d+\s+(.+?)\s+:\s+(-?\d+(?:\.\d+)?)\b")
+
+
 class _OrchestratorWandbSession:
     def __init__(
         self,
@@ -117,6 +234,7 @@ class _OrchestratorWandbSession:
         replay_buffer_config: ReplayBufferConfig,
         runner_config: LearnerRunnerConfig,
         selfplay_config: SelfPlayConfig,
+        eval_config: EvalConfig | None,
         run_id: str | None,
         resume: bool,
     ) -> None:
@@ -149,14 +267,18 @@ class _OrchestratorWandbSession:
                 "selfplay": asdict(selfplay_config),
             },
         }
+        if eval_config is not None:
+            init_kwargs["config"]["eval"] = asdict(eval_config)
         if run_id is not None:
             init_kwargs["id"] = run_id
             init_kwargs["resume"] = "must" if resume else "allow"
 
+        self._wandb = wandb
         self._run = wandb.init(**init_kwargs)
         self._run.define_metric("global_step")
         self._run.define_metric("iteration")
         self._run.define_metric("train/*", step_metric="global_step")
+        self._run.define_metric("eval/*", step_metric="iteration")
         self._closed = False
 
     @property
@@ -177,6 +299,39 @@ class _OrchestratorWandbSession:
             }
         )
 
+    def log_eval_ratings(
+        self,
+        *,
+        iteration: int,
+        global_step: int,
+        current_rating: float | None,
+        ratings_rows: list[dict[str, object]],
+    ) -> None:
+        payload: dict[str, object] = {
+            "global_step": global_step,
+            "iteration": iteration,
+        }
+        if current_rating is not None:
+            payload["eval/rating"] = current_rating
+
+        table_ctor = getattr(self._wandb, "Table", None)
+        if callable(table_ctor):
+            payload["eval/ratings_table"] = table_ctor(
+                columns=["snapshot", "iteration", "global_step", "rating"],
+                data=[
+                    [
+                        row["snapshot"],
+                        row["iteration"],
+                        row["global_step"],
+                        row["rating"],
+                    ]
+                    for row in ratings_rows
+                ],
+            )
+        else:
+            payload["eval/ratings"] = [dict(row) for row in ratings_rows]
+        self._run.log(payload)
+
     def close(self) -> None:
         if self._closed:
             return
@@ -194,6 +349,7 @@ def run_selfplay_update_loop(
     replay_buffer_config: ReplayBufferConfig,
     runner_config: LearnerRunnerConfig,
     wandb_config: WandbConfig | None = None,
+    eval_config: EvalConfig | None = None,
 ) -> list[TrainIterationReport]:
     if num_iterations <= 0:
         raise ValueError("num_iterations must be positive")
@@ -219,6 +375,7 @@ def run_selfplay_update_loop(
         learner_dir, runner_config.resume
     )
     launcher = NativeSelfPlayLauncher(selfplay_config)
+    eval_launcher = NativeEvalLauncher(eval_config) if eval_config is not None else None
     wandb_session = (
         _OrchestratorWandbSession(
             wandb_config,
@@ -229,6 +386,7 @@ def run_selfplay_update_loop(
             replay_buffer_config=replay_buffer_config,
             runner_config=runner_config,
             selfplay_config=selfplay_config,
+            eval_config=eval_config,
             run_id=restored_wandb_run_id,
             resume=runner_config.resume,
         )
@@ -292,8 +450,27 @@ def run_selfplay_update_loop(
                     iteration=iteration,
                     global_learner_step=report.ending_global_step,
                 )
+            eval_result = (
+                _run_eval_phase(
+                    run_root=root_path,
+                    learner_dir=learner_dir,
+                    artifacts_root=artifacts_root,
+                    report=report,
+                    eval_config=eval_config,
+                    eval_launcher=eval_launcher,
+                )
+                if eval_config is not None and eval_launcher is not None
+                else None
+            )
             if wandb_session is not None:
                 wandb_session.log_iteration(report)
+                if eval_result is not None:
+                    wandb_session.log_eval_ratings(
+                        iteration=report.iteration,
+                        global_step=report.ending_global_step,
+                        current_rating=eval_result.current_rating,
+                        ratings_rows=eval_result.ratings_rows,
+                    )
             reports.append(report)
     finally:
         if wandb_session is not None:
@@ -555,6 +732,257 @@ def _discover_historical_chunk_paths(selfplay_root: Path, iteration: int) -> lis
     return chunk_paths
 
 
+def _parse_eval_snapshot_path(snapshot_path: Path) -> _EvalSnapshot:
+    match = _SNAPSHOT_STEM_RE.fullmatch(snapshot_path.stem)
+    if match is None:
+        raise ValueError(f"invalid eval snapshot filename: {snapshot_path.name}")
+    return _EvalSnapshot(
+        path=snapshot_path,
+        stem=snapshot_path.stem,
+        iteration=int(match.group(1)),
+        global_step=int(match.group(2)),
+    )
+
+
+def _discover_eval_snapshots(
+    learner_dir: Path, snapshot_interval: int
+) -> list[_EvalSnapshot]:
+    snapshots_dir = _run_layout.snapshot_dir(learner_dir)
+    if not snapshots_dir.exists():
+        return []
+
+    snapshots: list[_EvalSnapshot] = []
+    for path in sorted(snapshots_dir.glob("*.pt")):
+        snapshot = _parse_eval_snapshot_path(path)
+        if snapshot.iteration % snapshot_interval != 0:
+            continue
+        snapshots.append(snapshot)
+    snapshots.sort(key=lambda snapshot: snapshot.iteration)
+    return snapshots
+
+
+def _eval_artifact_dir(artifacts_root: Path, snapshot: _EvalSnapshot) -> Path:
+    artifact_dir = _run_layout.artifact_iteration_dir(
+        artifacts_root, snapshot.iteration
+    )
+    if not artifact_dir.is_dir():
+        raise FileNotFoundError(f"missing eval artifact dir: {artifact_dir}")
+    return artifact_dir
+
+
+def _run_eval_phase(
+    *,
+    run_root: Path,
+    learner_dir: Path,
+    artifacts_root: Path,
+    report: TrainIterationReport,
+    eval_config: EvalConfig,
+    eval_launcher: NativeEvalLauncher,
+) -> _EvalRatingsResult | None:
+    if report.iteration % eval_config.snapshot_interval != 0:
+        return None
+    if not report.snapshot_path.is_file():
+        raise FileNotFoundError(
+            f"eval snapshot checkpoint does not exist: {report.snapshot_path}"
+        )
+
+    snapshots = _discover_eval_snapshots(learner_dir, eval_config.snapshot_interval)
+    current_snapshot = _parse_eval_snapshot_path(report.snapshot_path)
+    try:
+        current_index = next(
+            index
+            for index, snapshot in enumerate(snapshots)
+            if snapshot.stem == current_snapshot.stem
+        )
+    except StopIteration as exc:
+        raise RuntimeError(
+            f"current eval snapshot is missing from discovered snapshot set: {current_snapshot.stem}"
+        ) from exc
+    current_snapshot = snapshots[current_index]
+
+    for offset in eval_config.window_offsets:
+        prior_index = current_index - offset
+        if prior_index < 0:
+            continue
+        _ensure_eval_match(
+            run_root=run_root,
+            artifacts_root=artifacts_root,
+            eval_launcher=eval_launcher,
+            snapshot_a=current_snapshot,
+            snapshot_b=snapshots[prior_index],
+        )
+
+    return _rebuild_eval_ratings(
+        run_root=run_root,
+        learner_dir=learner_dir,
+        current_snapshot=current_snapshot,
+        snapshot_interval=eval_config.snapshot_interval,
+    )
+
+
+def _ensure_eval_match(
+    *,
+    run_root: Path,
+    artifacts_root: Path,
+    eval_launcher: NativeEvalLauncher,
+    snapshot_a: _EvalSnapshot,
+    snapshot_b: _EvalSnapshot,
+) -> None:
+    ordered = sorted((snapshot_a, snapshot_b), key=lambda snapshot: snapshot.stem)
+    player_a, player_b = ordered
+    match_path = _run_layout.eval_match_path(run_root, player_a.stem, player_b.stem)
+    if match_path.exists():
+        return
+
+    partial_match_path = _run_layout.partial_path(match_path)
+    _remove_path(partial_match_path)
+    try:
+        eval_launcher.run_match(
+            _eval_artifact_dir(artifacts_root, player_a),
+            _eval_artifact_dir(artifacts_root, player_b),
+            player_name_a=player_a.stem,
+            player_name_b=player_b.stem,
+            output_pgn_path=partial_match_path,
+        )
+        partial_match_path.rename(match_path)
+    except Exception:
+        _remove_path(partial_match_path)
+        raise
+
+
+def _rebuild_eval_ratings(
+    *,
+    run_root: Path,
+    learner_dir: Path,
+    current_snapshot: _EvalSnapshot,
+    snapshot_interval: int,
+) -> _EvalRatingsResult | None:
+    all_games_pgn = _rebuild_all_games_pgn(run_root)
+    if all_games_pgn is None:
+        return None
+
+    ratings_text_path = _run_layout.eval_ratings_text_path(run_root)
+    _run_ordo(all_games_pgn, ratings_text_path)
+
+    ratings_rows = _write_eval_ratings_csv(
+        learner_dir=learner_dir,
+        snapshot_interval=snapshot_interval,
+        ratings_text_path=ratings_text_path,
+        ratings_csv_path=_run_layout.eval_ratings_csv_path(run_root),
+    )
+    current_rating = next(
+        (
+            float(row["rating"])
+            for row in ratings_rows
+            if row["snapshot"] == current_snapshot.stem
+        ),
+        None,
+    )
+    return _EvalRatingsResult(
+        current_snapshot=current_snapshot,
+        current_rating=current_rating,
+        ratings_rows=ratings_rows,
+        ratings_csv_path=_run_layout.eval_ratings_csv_path(run_root),
+    )
+
+
+def _rebuild_all_games_pgn(run_root: Path) -> Path | None:
+    matches_dir = _run_layout.eval_matches_dir(run_root)
+    match_paths = sorted(path for path in matches_dir.glob("*.pgn") if path.is_file())
+    if not match_paths:
+        return None
+
+    output_path = _run_layout.eval_all_games_pgn_path(run_root)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    partial_output_path = _run_layout.partial_path(output_path)
+    _remove_path(partial_output_path)
+    try:
+        with partial_output_path.open("wb") as stream:
+            for match_path in match_paths:
+                payload = match_path.read_bytes()
+                stream.write(payload)
+                if payload and not payload.endswith(b"\n"):
+                    stream.write(b"\n")
+                stream.write(b"\n")
+        partial_output_path.rename(output_path)
+    except Exception:
+        _remove_path(partial_output_path)
+        raise
+    return output_path
+
+
+def _run_ordo(all_games_pgn_path: Path, ratings_text_path: Path) -> None:
+    ratings_text_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "ordo",
+                "-a",
+                "0",
+                "-p",
+                os.fspath(all_games_pgn_path),
+                "-o",
+                os.fspath(ratings_text_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ordo executable not found on PATH") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() if exc.stderr else "unknown error"
+        raise RuntimeError(f"ordo failed: {stderr}") from exc
+
+
+def _write_eval_ratings_csv(
+    *,
+    learner_dir: Path,
+    snapshot_interval: int,
+    ratings_text_path: Path,
+    ratings_csv_path: Path,
+) -> list[dict[str, object]]:
+    snapshots_by_stem = {
+        snapshot.stem: snapshot
+        for snapshot in _discover_eval_snapshots(learner_dir, snapshot_interval)
+    }
+    ratings_rows: list[dict[str, object]] = []
+    for line in ratings_text_path.read_text(encoding="utf-8").splitlines():
+        match = _ORDO_RATING_LINE_RE.match(line)
+        if match is None:
+            continue
+        snapshot = snapshots_by_stem.get(match.group(1).strip())
+        if snapshot is None:
+            continue
+        ratings_rows.append(
+            {
+                "snapshot": snapshot.stem,
+                "iteration": snapshot.iteration,
+                "global_step": snapshot.global_step,
+                "rating": float(match.group(2)),
+            }
+        )
+
+    ratings_rows.sort(key=lambda row: (int(row["iteration"]), str(row["snapshot"])))
+    ratings_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    partial_csv_path = _run_layout.partial_path(ratings_csv_path)
+    _remove_path(partial_csv_path)
+    try:
+        with partial_csv_path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(
+                stream,
+                fieldnames=["snapshot", "iteration", "global_step", "rating"],
+            )
+            writer.writeheader()
+            for row in ratings_rows:
+                writer.writerow(row)
+        partial_csv_path.rename(ratings_csv_path)
+    except Exception:
+        _remove_path(partial_csv_path)
+        raise
+    return ratings_rows
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run codfish self-play/update loop")
     parser.add_argument("--run-root", required=True)
@@ -586,6 +1014,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--c-puct", default=1.0, type=float)
     parser.add_argument("--c-visit", default=1.0, type=float)
     parser.add_argument("--c-scale", default=1.0, type=float)
+
+    parser.add_argument("--eval-snapshot-interval", default=0, type=int)
+    parser.add_argument("--eval-match-games", default=200, type=int)
+    parser.add_argument("--eval-num-workers", default=1, type=int)
+    parser.add_argument("--eval-num-action", default=8, type=int)
+    parser.add_argument("--eval-num-simulation", default=16, type=int)
+    parser.add_argument("--eval-c-puct", default=1.0, type=float)
+    parser.add_argument("--eval-c-visit", default=1.0, type=float)
+    parser.add_argument("--eval-c-scale", default=1.0, type=float)
+    parser.add_argument("--eval-window-offset", nargs="+", type=int, default=[1, 3, 10])
 
     parser.add_argument("--wandb-project")
     parser.add_argument("--wandb-entity")
@@ -646,6 +1084,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.wandb_project is not None
         else None
     )
+    eval_config = (
+        EvalConfig(
+            snapshot_interval=args.eval_snapshot_interval,
+            match_games=args.eval_match_games,
+            num_workers=args.eval_num_workers,
+            num_action=args.eval_num_action,
+            num_simulation=args.eval_num_simulation,
+            c_puct=args.eval_c_puct,
+            c_visit=args.eval_c_visit,
+            c_scale=args.eval_c_scale,
+            window_offsets=tuple(args.eval_window_offset),
+        )
+        if args.eval_snapshot_interval > 0
+        else None
+    )
 
     try:
         run_selfplay_update_loop(
@@ -657,6 +1110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             replay_buffer_config=replay_buffer_config,
             runner_config=runner_config,
             wandb_config=wandb_config,
+            eval_config=eval_config,
         )
     except Exception as exc:
         print(str(exc), file=sys.stderr)

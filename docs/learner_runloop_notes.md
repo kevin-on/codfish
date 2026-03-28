@@ -17,6 +17,7 @@ It owns:
 - self-play output directory lifecycle,
 - learner runner creation per iteration,
 - artifact export after training,
+- snapshot-based eval scheduling and output lifecycle,
 - resume and recovery policy.
 
 The learner runner is only one iteration of training work inside that larger
@@ -36,6 +37,21 @@ So a fresh run starts from:
 - a bootstrap artifact for iteration zero,
 - self-play output for iteration one,
 - learner iteration `1`
+
+## Snapshot Eval Path
+
+When eval is enabled, the orchestrator treats learner snapshots as evaluation
+anchors rather than as restore points only.
+
+The important contract is:
+
+- the orchestrator only considers snapshots on the configured interval,
+- the current snapshot is matched against earlier snapshots chosen by fixed
+  window offsets,
+- each snapshot is evaluated through the exported artifact for the same
+  iteration,
+- output is persisted as per-pair match records plus rebuilt ratings under the
+  run root.
 
 ## Bootstrap Path
 
@@ -65,6 +81,9 @@ The contract is:
 - if that artifact is missing, it may be regenerated from `latest.pt`,
 - if it exists, it must match the current model spec and expected iteration.
 
+Eval outputs are derived from snapshots and artifacts rather than being the
+authoritative resume anchor. Resume state still comes from `learner/latest.pt`.
+
 Historical self-play directories for earlier iterations must also exist. Missing
 history is treated as an error, not silently skipped.
 
@@ -81,6 +100,12 @@ That gives two important behaviors:
 The orchestrator applies the same idea to artifact export through the helper in
 `artifacts.py`.
 
+The eval path follows the same broad pattern:
+
+- per-pair match PGNs are written through a partial path and renamed on success,
+- rebuilt aggregate rating outputs are also replaced atomically,
+- existing successful match PGNs are reused instead of being recomputed.
+
 ## W&B Ownership
 
 Orchestrated W&B is not the same as standalone learner W&B.
@@ -89,6 +114,7 @@ The orchestrator:
 
 - creates one W&B run for the whole outer loop,
 - logs once per completed learner iteration,
+- logs optional eval ratings for iterations that ran the eval phase,
 - restores the persisted run id on resume,
 - persists the run identity into learner checkpoints so resume can reconnect to
   the same run.
@@ -103,4 +129,11 @@ The current loop intentionally stays simple:
 - it rebuilds replay from chunk files every iteration,
 - it creates a fresh learner runner every iteration,
 - it requires CUDA for orchestrated AOTI self-play,
-- it has no separate artifact registry beyond the run-root directory layout.
+- it has no separate artifact registry beyond the run-root directory layout,
+- eval is optional and only runs on scheduled snapshot intervals,
+- eval comparisons are fixed-window head-to-head matches, not a general
+  tournament scheduler,
+- if eval fails after checkpoints and artifacts already advanced, resume
+  continues from the next learner iteration and does not automatically backfill
+  the missed eval history,
+- rating rebuild currently depends on `ordo` being available on `PATH`.

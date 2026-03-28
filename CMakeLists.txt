@@ -12,12 +12,15 @@ option(CODFISH_ENABLE_PEXT "Enable BMI2/PEXT-based move generation" ON)
 set(CODFISH_PRODUCTION_SOURCES
     src/actor/backends/aoti_backend.cc
     src/actor/backends/mock_backend.cc
+    src/actor/mcts/aoti_match.cc
     src/actor/mcts/aoti_selfplay.cc
+    src/actor/mcts/match_coordinator.cc
     src/actor/mcts/output/chunk_writer_runtime.cc
     src/actor/mcts/output/raw_chunk_format.cc
     src/actor/mcts/mock_selfplay.cc
     src/actor/mcts/runtime/game_runner.cc
     src/actor/mcts/runtime/inference_runtime.cc
+    src/actor/mcts/runtime/match_game_runner.cc
     src/actor/mcts/runtime/worker_runtime.cc
     src/actor/mcts/search_coordinator.cc
     src/actor/mcts/searchers/gumbel/gumbel_mcts.cc
@@ -37,7 +40,9 @@ set(CODFISH_TEST_SOURCES
     src/actor/mcts/primitives/thread_safe_queue_test.cc
     src/actor/mcts/runtime/game_runner_test.cc
     src/actor/mcts/runtime/inference_runtime_test.cc
+    src/actor/mcts/runtime/match_game_runner_test.cc
     src/actor/mcts/runtime/worker_runtime_test.cc
+    src/actor/mcts/match_coordinator_test.cc
     src/actor/mcts/search_coordinator_smoke_test.cc
     src/actor/mcts/search_coordinator_test.cc
     src/actor/mcts/searchers/gumbel/gumbel_mcts_test.cc
@@ -211,6 +216,7 @@ if(BUILD_TESTING)
     endforeach()
 
     set_tests_properties(search_coordinator_smoke_test PROPERTIES LABELS smoke)
+    set_tests_properties(board_test PROPERTIES LABELS slow)
 
     add_executable(
         learner_raw_chunk_golden_writer

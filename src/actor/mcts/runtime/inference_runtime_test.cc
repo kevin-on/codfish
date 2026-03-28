@@ -3,9 +3,11 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
+#include "actor/mcts/runtime/match_types.h"
 #include "lc0/move_index.h"
 
 namespace engine {
@@ -59,6 +61,45 @@ class RecordingBackend final : public InferenceBackend {
   std::vector<int> batch_sizes_;
 };
 
+class MarkerBackend final : public InferenceBackend {
+ public:
+  explicit MarkerBackend(int marker) : marker_(marker) {}
+
+  Status Load() override {
+    ++load_calls_;
+    return Status::Ok();
+  }
+
+  Status Run(const InferenceBatch& batch, InferenceOutputs* out) override {
+    if (out == nullptr) return Status::Error("output buffer is null");
+
+    batch_sizes_.push_back(batch.batch_size);
+    out->policy_logits.clear();
+    out->wdl_probs.clear();
+    for (int batch_idx = 0; batch_idx < batch.batch_size; ++batch_idx) {
+      const int item_value = marker_ + next_item_id_++;
+      for (int policy_idx = 0; policy_idx < lczero::kPolicySize; ++policy_idx) {
+        out->policy_logits.push_back(static_cast<float>(item_value));
+      }
+      out->wdl_probs.push_back(static_cast<float>(item_value));
+      out->wdl_probs.push_back(static_cast<float>(item_value + 100));
+      out->wdl_probs.push_back(static_cast<float>(item_value + 200));
+    }
+    return Status::Ok();
+  }
+
+  std::string Name() const override { return "marker"; }
+
+  int load_calls() const { return load_calls_; }
+  const std::vector<int>& batch_sizes() const { return batch_sizes_; }
+
+ private:
+  int marker_ = 0;
+  int load_calls_ = 0;
+  int next_item_id_ = 0;
+  std::vector<int> batch_sizes_;
+};
+
 PendingEval MakePendingEval(int task_id, std::size_t num_items) {
   auto task = std::make_unique<TaggedGameTask>(task_id);
   task->state = TaskState::kWaitingEval;
@@ -68,6 +109,38 @@ PendingEval MakePendingEval(int task_id, std::size_t num_items) {
   for (EvalRequestItem& item : request.items) {
     item.len = 1;
     item.positions[0] = lczero::Position();
+  }
+
+  return PendingEval{
+      .task = std::unique_ptr<GameTask>(std::move(task)),
+      .request = std::move(request),
+  };
+}
+
+lczero::Position WhiteToMovePosition() {
+  return lczero::Position::FromFen(lczero::ChessBoard::kStartposFen);
+}
+
+lczero::Position BlackToMovePosition() {
+  return lczero::Position::FromFen(
+      "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+}
+
+PendingEval MakeRoutedPendingEval(int white_backend_slot,
+                                  int black_backend_slot,
+                                  std::vector<bool> black_to_move_items) {
+  auto task = std::make_unique<MatchTask>();
+  task->state = TaskState::kWaitingEval;
+  task->white_backend_slot = white_backend_slot;
+  task->black_backend_slot = black_backend_slot;
+
+  EvalRequest request;
+  request.items.resize(black_to_move_items.size());
+  for (std::size_t i = 0; i < black_to_move_items.size(); ++i) {
+    EvalRequestItem& item = request.items[i];
+    item.len = 1;
+    item.positions[0] =
+        black_to_move_items[i] ? BlackToMovePosition() : WhiteToMovePosition();
   }
 
   return PendingEval{
@@ -105,6 +178,28 @@ void ExpectItemPayload(const EvalResponseItem& item, int expected_item_id) {
                   static_cast<float>(expected_item_id + 100));
   EXPECT_FLOAT_EQ(item.wdl_probs[2],
                   static_cast<float>(expected_item_id + 200));
+}
+
+std::unique_ptr<MatchTask> PopReadyMatchTask(
+    ThreadSafeQueue<std::unique_ptr<GameTask>>& ready_queue) {
+  std::optional<std::unique_ptr<GameTask>> task = ready_queue.pop();
+  EXPECT_TRUE(task.has_value());
+  EXPECT_TRUE(*task != nullptr);
+  auto* match_task = dynamic_cast<MatchTask*>(task->get());
+  EXPECT_NE(match_task, nullptr);
+  return std::unique_ptr<MatchTask>(static_cast<MatchTask*>(task->release()));
+}
+
+void ExpectMarker(const EvalResponseItem& item, int expected_value) {
+  ASSERT_EQ(item.policy_logits.size(),
+            static_cast<std::size_t>(lczero::kPolicySize));
+  ASSERT_EQ(item.wdl_probs.size(), 3u);
+  EXPECT_FLOAT_EQ(item.policy_logits[0], static_cast<float>(expected_value));
+  EXPECT_FLOAT_EQ(item.policy_logits.back(),
+                  static_cast<float>(expected_value));
+  EXPECT_FLOAT_EQ(item.wdl_probs[0], static_cast<float>(expected_value));
+  EXPECT_FLOAT_EQ(item.wdl_probs[1], static_cast<float>(expected_value + 100));
+  EXPECT_FLOAT_EQ(item.wdl_probs[2], static_cast<float>(expected_value + 200));
 }
 
 TEST(InferenceRuntime, BatchesAcrossMultipleRequestsAndRequeuesReadyTasks) {
@@ -226,6 +321,55 @@ TEST(InferenceRuntime, SplitRequestCanShareLaterBatchWithNextRequest) {
   ExpectItemPayload(second->response->items[0], /*expected_item_id=*/5);
   ExpectItemPayload(second->response->items[1], /*expected_item_id=*/6);
   EXPECT_EQ(backend->batch_sizes(), std::vector<int>({4, 3}));
+}
+
+TEST(InferenceRuntime, RoutesItemsBySideToMoveAcrossMultipleBackends) {
+  ThreadSafeQueue<PendingEval> request_queue;
+  ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
+  auto backend_zero = std::make_shared<MarkerBackend>(1000);
+  auto backend_one = std::make_shared<MarkerBackend>(2000);
+  const FeatureEncoder encoder;
+
+  InferenceRuntime runtime(
+      InferenceChannels{
+          .request_queue = &request_queue,
+          .ready_queue = &ready_queue,
+      },
+      std::vector<std::shared_ptr<InferenceBackend>>{
+          backend_zero,
+          backend_one,
+      },
+      &encoder,
+      InferenceRuntimeOptions{
+          .max_batch_size = 8,
+          .flush_timeout = 5ms,
+      });
+  runtime.Start();
+
+  ASSERT_TRUE(request_queue.push(MakeRoutedPendingEval(
+      /*white_backend_slot=*/0, /*black_backend_slot=*/1, {false, true})));
+  ASSERT_TRUE(request_queue.push(MakeRoutedPendingEval(
+      /*white_backend_slot=*/1, /*black_backend_slot=*/0, {false, true})));
+
+  std::unique_ptr<MatchTask> first = PopReadyMatchTask(ready_queue);
+  std::unique_ptr<MatchTask> second = PopReadyMatchTask(ready_queue);
+
+  runtime.Stop();
+
+  ASSERT_TRUE(first->response.has_value());
+  ASSERT_TRUE(second->response.has_value());
+  EXPECT_EQ(first->state, TaskState::kReady);
+  EXPECT_EQ(second->state, TaskState::kReady);
+  ASSERT_EQ(first->response->items.size(), 2u);
+  ASSERT_EQ(second->response->items.size(), 2u);
+  ExpectMarker(first->response->items[0], 1000);
+  ExpectMarker(first->response->items[1], 2000);
+  ExpectMarker(second->response->items[0], 2001);
+  ExpectMarker(second->response->items[1], 1001);
+  EXPECT_EQ(backend_zero->load_calls(), 1);
+  EXPECT_EQ(backend_one->load_calls(), 1);
+  EXPECT_EQ(backend_zero->batch_sizes(), std::vector<int>({2}));
+  EXPECT_EQ(backend_one->batch_sizes(), std::vector<int>({2}));
 }
 
 }  // namespace

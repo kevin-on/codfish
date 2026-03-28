@@ -29,3 +29,9 @@ or other cross-system flow:
 
 - `docs/project_architecture.md`
   - End-to-end project loop from checkpoint to artifact to self-play to learner and back.
+
+## Test Execution
+
+- Use `ctest --test-dir build -LE 'slow|smoke' --output-on-failure` as the default local verification loop.
+- Run `ctest --test-dir build -L smoke --output-on-failure` when touching search coordinator or other cross-runtime wiring.
+- Run `ctest --test-dir build -L slow --output-on-failure` only when touching chess move generation, legality, or FEN parsing code.

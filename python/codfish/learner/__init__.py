@@ -12,6 +12,7 @@ from ._api import (
     RawPolicyEntry,
     encode_raw_game,
     read_raw_chunk_file,
+    run_aoti_match,
 )
 from ._replay import ReplayBuffer, ReplayBufferConfig
 from ._runner import LearnerRunner
@@ -47,4 +48,5 @@ __all__ = [
     "encode_raw_game",
     "make_small_alphazero_resnet_spec",
     "read_raw_chunk_file",
+    "run_aoti_match",
 ]

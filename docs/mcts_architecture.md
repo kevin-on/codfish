@@ -1,6 +1,7 @@
 # MCTS Runtime Architecture
 
-This directory implements a self-play runtime around one idea: split the system by ownership boundaries, not by algorithm details.
+This directory implements self-play and match-evaluation runtimes around one
+idea: split the system by ownership boundaries, not by algorithm details.
 
 If you are new here, read:
 
@@ -11,7 +12,7 @@ If you are new here, read:
 
 ## Mental Model
 
-The runtime has five long-lived pieces:
+The self-play path has five long-lived pieces:
 
 - `SearchCoordinator`
   - Assembles the system, owns the queues, starts and stops threads, and seeds initial tasks.
@@ -26,6 +27,18 @@ The runtime has five long-lived pieces:
 
 The hot path is direct queue handoff between these components. The coordinator owns the plumbing but is not on the data path once the run starts.
 
+The match-eval path reuses the same worker/inference split with different
+output ownership:
+
+- `MatchCoordinator`
+  - Owns lifecycle and bounded match assembly for head-to-head evaluation.
+- `MatchGameRunner`
+  - Turns a completed root search into either the next ply of the same match
+    game or a PGN-ready terminal payload.
+- `InferenceRuntime`
+  - Can serve one backend or multiple backends, depending on what the task type
+    asks it to route.
+
 ## End-to-End Flow
 
 At a high level:
@@ -38,6 +51,18 @@ GameTaskFactory
   -> workers
   -> game runner
   -> workers again or raw storage
+```
+
+For match evaluation, the tail changes but the ownership model stays the same:
+
+```text
+GameTaskFactory
+  -> ready_queue
+  -> workers
+  -> inference
+  -> workers
+  -> match game runner
+  -> workers again or PGN output
 ```
 
 What matters is not the exact loop structure, but the ownership model:
@@ -56,6 +81,9 @@ These boundaries are the main reason the code is shaped the way it is:
 - Writer owns persistence only.
 - Coordinator owns lifecycle and wiring only.
 
+Runtime-specific task metadata may change, but those ownership boundaries should
+not.
+
 When reading or changing the code, preserve those boundaries first.
 
 ## Current Limits
@@ -63,7 +91,9 @@ When reading or changing the code, preserve those boundaries first.
 The current implementation intentionally stays simple:
 
 - `Stop()` is not a graceful full drain.
-- Completed games are not automatically replaced with new ones.
-- Raw output is required; completed games are always persisted as raw chunks.
+- Completed self-play games are not automatically replaced with new ones.
+- Self-play raw output remains the only training-data persistence path.
+- Match evaluation is currently a bounded two-player run with PGN output; any
+  rating aggregation lives above this layer.
 
 Those are current system properties, not accidental omissions in one file.

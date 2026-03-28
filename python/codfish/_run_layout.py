@@ -12,6 +12,13 @@
   selfplay/
     iter_000001/
     iter_000002/
+  eval/
+    matches/
+      iter_000010_step_000000281__iter_000020_step_000000579.pgn
+    ordo/
+      all_games.pgn
+      ratings.txt
+      ratings.csv
 """
 
 from __future__ import annotations
@@ -30,6 +37,18 @@ def artifacts_dir(run_root: str | os.PathLike[str]) -> Path:
 
 def selfplay_dir(run_root: str | os.PathLike[str]) -> Path:
     return Path(run_root) / "selfplay"
+
+
+def eval_dir(run_root: str | os.PathLike[str]) -> Path:
+    return Path(run_root) / "eval"
+
+
+def eval_matches_dir(run_root: str | os.PathLike[str]) -> Path:
+    return eval_dir(run_root) / "matches"
+
+
+def eval_ordo_dir(run_root: str | os.PathLike[str]) -> Path:
+    return eval_dir(run_root) / "ordo"
 
 
 def latest_checkpoint_path(learner_dir_path: str | os.PathLike[str]) -> Path:
@@ -69,6 +88,27 @@ def selfplay_iteration_dir(
     selfplay_dir_path: str | os.PathLike[str], iteration: int
 ) -> Path:
     return Path(selfplay_dir_path) / f"iter_{iteration:06d}"
+
+
+def eval_match_path(
+    run_root: str | os.PathLike[str],
+    snapshot_stem_a: str,
+    snapshot_stem_b: str,
+) -> Path:
+    lower, upper = sorted((snapshot_stem_a, snapshot_stem_b))
+    return eval_matches_dir(run_root) / f"{lower}__{upper}.pgn"
+
+
+def eval_all_games_pgn_path(run_root: str | os.PathLike[str]) -> Path:
+    return eval_ordo_dir(run_root) / "all_games.pgn"
+
+
+def eval_ratings_text_path(run_root: str | os.PathLike[str]) -> Path:
+    return eval_ordo_dir(run_root) / "ratings.txt"
+
+
+def eval_ratings_csv_path(run_root: str | os.PathLike[str]) -> Path:
+    return eval_ordo_dir(run_root) / "ratings.csv"
 
 
 def partial_path(final_path: str | os.PathLike[str]) -> Path:

@@ -73,16 +73,30 @@ Build after configuring:
 cmake --build build
 ```
 
-Run the test suite:
+Run the full test suite:
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-For faster local iteration, skip the smoke test:
+For faster local iteration, skip slow and smoke tests:
 
 ```bash
-ctest --test-dir build -LE smoke --output-on-failure
+ctest --test-dir build -LE 'slow|smoke' --output-on-failure
+```
+
+Run the smoke test explicitly when touching search coordinator or other
+cross-runtime wiring:
+
+```bash
+ctest --test-dir build -L smoke --output-on-failure
+```
+
+Run the slow board regression test explicitly when touching chess move
+generation, legality, or FEN parsing:
+
+```bash
+ctest --test-dir build -L slow --output-on-failure
 ```
 
 The configure step writes `compile_commands.json` into `build/` for clangd and

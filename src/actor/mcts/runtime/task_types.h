@@ -19,6 +19,11 @@ enum class TaskState : uint8_t {
 struct GameTask {
   virtual ~GameTask() = default;
 
+  virtual int BackendSlotForRequestItem(const EvalRequestItem& item) const {
+    static_cast<void>(item);
+    return 0;
+  }
+
   std::unique_ptr<MCTSSearcher> searcher;
   std::optional<SearchCoroutine> coroutine;
   TaskState state = TaskState::kNew;

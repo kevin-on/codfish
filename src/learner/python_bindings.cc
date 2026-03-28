@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 
+#include "actor/mcts/aoti_match.h"
 #include "actor/mcts/aoti_selfplay.h"
 #include "actor/mcts/mock_selfplay.h"
 #include "learner/raw_types.h"
@@ -179,6 +180,42 @@ NB_MODULE(_native, m) {
       nb::arg("model_package_path"), nb::arg("input_channels"),
       nb::arg("policy_size"), nb::arg("raw_output_dir"), nb::arg("num_workers"),
       nb::arg("num_games"), nb::arg("raw_chunk_max_bytes"),
+      nb::arg("num_action"), nb::arg("num_simulation"), nb::arg("c_puct"),
+      nb::arg("c_visit"), nb::arg("c_scale"),
+      nb::call_guard<nb::gil_scoped_release>());
+
+  m.def(
+      "run_aoti_match",
+      [](const std::string& model_package_path_a,
+         const std::string& model_package_path_b,
+         const std::string& player_name_a, const std::string& player_name_b,
+         int input_channels, int policy_size,
+         const std::string& output_pgn_path, int num_workers, int num_games,
+         int num_action, int num_simulation, float c_puct, float c_visit,
+         float c_scale) {
+        engine::RunAotiMatch(engine::AotiMatchOptions{
+            .model_package_paths =
+                {
+                    std::filesystem::path(model_package_path_a),
+                    std::filesystem::path(model_package_path_b),
+                },
+            .player_names = {player_name_a, player_name_b},
+            .input_channels = input_channels,
+            .policy_size = policy_size,
+            .output_pgn_path = std::filesystem::path(output_pgn_path),
+            .num_workers = num_workers,
+            .num_games = num_games,
+            .num_action = num_action,
+            .num_simulation = num_simulation,
+            .c_puct = c_puct,
+            .c_visit = c_visit,
+            .c_scale = c_scale,
+        });
+      },
+      nb::arg("model_package_path_a"), nb::arg("model_package_path_b"),
+      nb::arg("player_name_a"), nb::arg("player_name_b"),
+      nb::arg("input_channels"), nb::arg("policy_size"),
+      nb::arg("output_pgn_path"), nb::arg("num_workers"), nb::arg("num_games"),
       nb::arg("num_action"), nb::arg("num_simulation"), nb::arg("c_puct"),
       nb::arg("c_visit"), nb::arg("c_scale"),
       nb::call_guard<nb::gil_scoped_release>());
