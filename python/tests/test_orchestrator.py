@@ -582,6 +582,11 @@ class OrchestratorTest(unittest.TestCase):
                 (run_root / "artifacts" / "iter_000000" / AOTI_MANIFEST_FILE).exists()
             )
             self.assertTrue(
+                (
+                    run_root / "learner" / "snapshots" / "iter_000000_step_000000000.pt"
+                ).exists()
+            )
+            self.assertTrue(
                 (run_root / "artifacts" / "iter_000001" / AOTI_MANIFEST_FILE).exists()
             )
             self.assertTrue(
@@ -1370,33 +1375,48 @@ class OrchestratorTest(unittest.TestCase):
                 / "matches"
                 / "iter_000002_step_000000002__iter_000004_step_000000004.pgn"
             )
+            initial_match_path = (
+                run_root
+                / "eval"
+                / "matches"
+                / "iter_000000_step_000000000__iter_000002_step_000000002.pgn"
+            )
             all_games_path = run_root / "eval" / "ordo" / "all_games.pgn"
             ratings_csv_path = run_root / "eval" / "ordo" / "ratings.csv"
             self.assertEqual(
                 [call[:2] for call in match_calls],
                 [
                     (
+                        "iter_000000_step_000000000",
+                        "iter_000002_step_000000002",
+                    ),
+                    (
                         "iter_000002_step_000000002",
                         "iter_000004_step_000000004",
-                    )
+                    ),
                 ],
             )
             self.assertTrue(match_path.exists())
+            self.assertTrue(initial_match_path.exists())
             self.assertTrue(ratings_csv_path.exists())
             self.assertEqual(
                 all_games_path.read_text(encoding="utf-8"),
-                match_path.read_text(encoding="utf-8") + "\n",
+                initial_match_path.read_text(encoding="utf-8")
+                + "\n"
+                + match_path.read_text(encoding="utf-8")
+                + "\n",
             )
-            self.assertEqual(len(ordo_calls), 1)
+            self.assertEqual(len(ordo_calls), 2)
             eval_logs = [
                 payload
                 for payload in fake_wandb.run.log_calls
                 if "eval/ratings_curve" in payload or "eval/ratings_table" in payload
             ]
-            self.assertEqual(len(eval_logs), 1)
-            self.assertNotIn("iteration", eval_logs[0])
-            self.assertNotIn("global_step", eval_logs[0])
-            ratings_table = eval_logs[0]["eval/ratings_table"]
+            self.assertEqual(len(eval_logs), 2)
+            for payload in eval_logs:
+                self.assertNotIn("iteration", payload)
+                self.assertNotIn("global_step", payload)
+            ratings_table = eval_logs[-1]["eval/ratings_table"]
             self.assertEqual(
                 ratings_table.columns,
                 ["snapshot", "iteration", "global_step", "rating"],
@@ -1404,11 +1424,12 @@ class OrchestratorTest(unittest.TestCase):
             self.assertEqual(
                 ratings_table.data,
                 [
+                    ["iter_000000_step_000000000", 0, 0, 0.0],
                     ["iter_000002_step_000000002", 2, 2, 2.0],
                     ["iter_000004_step_000000004", 4, 4, 4.0],
                 ],
             )
-            ratings_curve = eval_logs[0]["eval/ratings_curve"]
+            ratings_curve = eval_logs[-1]["eval/ratings_curve"]
             self.assertIs(ratings_curve.table, ratings_table)
             self.assertEqual(ratings_curve.x, "iteration")
             self.assertEqual(ratings_curve.y, "rating")
@@ -1421,12 +1442,12 @@ class OrchestratorTest(unittest.TestCase):
                 run_root
                 / "eval"
                 / "matches"
-                / "iter_000002_step_000000002__iter_000004_step_000000004.pgn"
+                / "iter_000000_step_000000000__iter_000002_step_000000002.pgn"
             )
             existing_match_path.parent.mkdir(parents=True, exist_ok=True)
             existing_match_path.write_text(
-                '[Event "Eval"]\n[White "iter_000002_step_000000002"]\n'
-                '[Black "iter_000004_step_000000004"]\n[Result "1/2-1/2"]\n\n1/2-1/2\n',
+                '[Event "Eval"]\n[White "iter_000000_step_000000000"]\n'
+                '[Black "iter_000002_step_000000002"]\n[Result "1/2-1/2"]\n\n1/2-1/2\n',
                 encoding="utf-8",
             )
 
@@ -1449,11 +1470,54 @@ class OrchestratorTest(unittest.TestCase):
                 del check, capture_output, text
                 ratings_path = pathlib.Path(cmd[cmd.index("-o") + 1])
                 ratings_path.write_text(
-                    "  1 iter_000002_step_000000002 : 2.0\n"
-                    "  2 iter_000004_step_000000004 : 4.0\n",
+                    "  1 iter_000000_step_000000000 : 0.0\n"
+                    "  2 iter_000002_step_000000002 : 2.0\n"
+                    "  3 iter_000004_step_000000004 : 4.0\n",
                     encoding="utf-8",
                 )
                 return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            match_calls: list[tuple[str, str]] = []
+
+            def fake_run_match(
+                model_path_a: pathlib.Path,
+                model_path_b: pathlib.Path,
+                *,
+                player_name_a: str,
+                player_name_b: str,
+                input_channels: int,
+                policy_size: int,
+                output_pgn_path: str | os.PathLike[str],
+                num_workers: int,
+                num_games: int,
+                num_action: int,
+                num_simulation: int,
+                c_puct: float,
+                c_visit: float,
+                c_scale: float,
+            ) -> None:
+                del (
+                    model_path_a,
+                    model_path_b,
+                    input_channels,
+                    policy_size,
+                    num_workers,
+                    num_games,
+                    num_action,
+                    num_simulation,
+                    c_puct,
+                    c_visit,
+                    c_scale,
+                )
+                match_calls.append((player_name_a, player_name_b))
+                output_path = pathlib.Path(output_pgn_path)
+                output_path.write_text(
+                    '[Event "Eval"]\n'
+                    f'[White "{player_name_a}"]\n'
+                    f'[Black "{player_name_b}"]\n'
+                    '[Result "1/2-1/2"]\n\n1/2-1/2\n',
+                    encoding="utf-8",
+                )
 
             with (
                 self._patched_aoti(),
@@ -1468,9 +1532,7 @@ class OrchestratorTest(unittest.TestCase):
                 ),
                 mock.patch(
                     "codfish.orchestrator.run_aoti_match",
-                    side_effect=AssertionError(
-                        "existing eval match should have been skipped"
-                    ),
+                    side_effect=fake_run_match,
                 ),
                 mock.patch(
                     "codfish.orchestrator.subprocess.run",
@@ -1492,6 +1554,15 @@ class OrchestratorTest(unittest.TestCase):
                     ),
                 )
 
+            self.assertEqual(
+                match_calls,
+                [
+                    (
+                        "iter_000002_step_000000002",
+                        "iter_000004_step_000000004",
+                    )
+                ],
+            )
             self.assertTrue((run_root / "eval" / "ordo" / "ratings.csv").exists())
 
     def test_run_selfplay_update_loop_cleans_partial_dir_after_selfplay_failure(

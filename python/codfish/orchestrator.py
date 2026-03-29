@@ -35,7 +35,9 @@ from .learner._api import get_model_io_shape, run_aoti_match, run_aoti_selfplay
 from .learner._checkpoint import (
     _trainer_config_payload,
     atomic_torch_save,
+    build_snapshot_payload,
     build_training_checkpoint_payload,
+    load_snapshot_checkpoint,
     load_training_checkpoint,
 )
 from .learner._types import ModelSpec
@@ -609,6 +611,11 @@ def _ensure_initial_bootstrap_state(
             model_spec=model_spec,
             expected_iteration=0,
         )
+        _ensure_initial_snapshot(
+            learner_dir=learner_dir,
+            initial_checkpoint_path=initial_checkpoint_path,
+            model_spec=model_spec,
+        )
         return initial_checkpoint_path
 
     if initial_checkpoint_path.is_file():
@@ -622,6 +629,11 @@ def _ensure_initial_bootstrap_state(
             checkpoint_path=initial_checkpoint_path,
             artifact_dir_path=bootstrap_artifact_dir,
             expected_iteration=0,
+        )
+        _ensure_initial_snapshot(
+            learner_dir=learner_dir,
+            initial_checkpoint_path=initial_checkpoint_path,
+            model_spec=model_spec,
         )
         return initial_checkpoint_path
 
@@ -639,6 +651,11 @@ def _ensure_initial_bootstrap_state(
         artifact_dir_path=bootstrap_artifact_dir,
         iteration=0,
         global_learner_step=0,
+    )
+    _ensure_initial_snapshot(
+        learner_dir=learner_dir,
+        initial_checkpoint_path=initial_checkpoint_path,
+        model_spec=model_spec,
     )
     return initial_checkpoint_path
 
@@ -668,6 +685,41 @@ def _write_initial_checkpoint(
         replay_sampler_rng_state=None,
     )
     atomic_torch_save(payload, initial_checkpoint_path)
+
+
+def _ensure_initial_snapshot(
+    *,
+    learner_dir: Path,
+    initial_checkpoint_path: Path,
+    model_spec: ModelSpec,
+) -> Path:
+    snapshot_path = _run_layout.snapshot_path(learner_dir, iteration=0, global_step=0)
+    if snapshot_path.is_file():
+        _validate_snapshot_matches_model_spec(
+            snapshot_path,
+            model_spec=model_spec,
+            expected_iteration=0,
+            expected_global_step=0,
+        )
+        return snapshot_path
+
+    checkpoint = load_training_checkpoint(
+        initial_checkpoint_path, map_location=torch.device("cpu")
+    )
+    if checkpoint.global_learner_step != 0:
+        raise ValueError(
+            "initial checkpoint global_learner_step does not match expected value: "
+            f"{checkpoint.global_learner_step} != 0"
+        )
+    payload = build_snapshot_payload(
+        model_state_dict=checkpoint.model_state_dict,
+        global_learner_step=checkpoint.global_learner_step,
+        iteration=checkpoint.iteration,
+        model_name=checkpoint.model_name,
+        model_config=checkpoint.model_config,
+    )
+    atomic_torch_save(payload, snapshot_path)
+    return snapshot_path
 
 
 def _load_runner_from_checkpoint(
@@ -704,6 +756,32 @@ def _validate_checkpoint_matches_model_spec(
         raise ValueError("checkpoint model_name does not match current ModelSpec")
     if checkpoint.model_config != model_spec.config:
         raise ValueError("checkpoint model_config does not match current ModelSpec")
+
+
+def _validate_snapshot_matches_model_spec(
+    checkpoint_path: str | os.PathLike[str],
+    *,
+    model_spec: ModelSpec,
+    expected_iteration: int,
+    expected_global_step: int,
+) -> None:
+    checkpoint = load_snapshot_checkpoint(
+        checkpoint_path, map_location=torch.device("cpu")
+    )
+    if checkpoint.iteration != expected_iteration:
+        raise ValueError(
+            "snapshot iteration does not match expected iteration: "
+            f"{checkpoint.iteration} != {expected_iteration}"
+        )
+    if checkpoint.global_learner_step != expected_global_step:
+        raise ValueError(
+            "snapshot global_learner_step does not match expected value: "
+            f"{checkpoint.global_learner_step} != {expected_global_step}"
+        )
+    if checkpoint.model_name != model_spec.name:
+        raise ValueError("snapshot model_name does not match current ModelSpec")
+    if checkpoint.model_config != model_spec.config:
+        raise ValueError("snapshot model_config does not match current ModelSpec")
 
 
 def _discover_iteration_chunk_paths(iteration_dir: Path) -> list[Path]:
