@@ -40,6 +40,7 @@ from codfish.learner import (
 from codfish.learner._api import get_model_io_shape
 from codfish.learner._checkpoint import (
     atomic_torch_save,
+    build_snapshot_payload,
     build_training_checkpoint_payload,
     load_training_checkpoint,
 )
@@ -47,6 +48,7 @@ from codfish.orchestrator import (
     EvalConfig,
     NativeSelfPlayLauncher,
     SelfPlayConfig,
+    run_eval_only,
     run_selfplay_update_loop,
 )
 
@@ -522,6 +524,36 @@ class OrchestratorTest(unittest.TestCase):
             global_learner_step=checkpoint.global_learner_step,
         )
         return artifact_path
+
+    def _write_fake_snapshot(
+        self,
+        learner_dir: pathlib.Path,
+        *,
+        iteration: int,
+        global_step: int,
+        model_name: str = "toy-model",
+        model_config: dict[str, object] | None = None,
+    ) -> pathlib.Path:
+        if model_config is None:
+            model_config = {
+                "kind": "toy",
+                "input_channels": _model_shape()[0],
+                "policy_size": _model_shape()[1],
+            }
+        path = _run_layout.snapshot_path(
+            learner_dir, iteration=iteration, global_step=global_step
+        )
+        atomic_torch_save(
+            build_snapshot_payload(
+                model_state_dict={},
+                global_learner_step=global_step,
+                iteration=iteration,
+                model_name=model_name,
+                model_config=model_config,
+            ),
+            path,
+        )
+        return path
 
     @contextmanager
     def _patched_aoti(self):
@@ -1564,6 +1596,161 @@ class OrchestratorTest(unittest.TestCase):
                 ],
             )
             self.assertTrue((run_root / "eval" / "ordo" / "ratings.csv").exists())
+
+    def test_run_eval_only_rebuilds_matches_and_ratings_from_existing_snapshots(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_root = pathlib.Path(tmp_dir)
+            learner_dir = _run_layout.learner_dir(run_root)
+            artifacts_root = _run_layout.artifacts_dir(run_root)
+            model_name = "toy-model"
+            model_config = {
+                "kind": "toy",
+                "input_channels": _model_shape()[0],
+                "policy_size": _model_shape()[1],
+            }
+            for iteration, global_step in ((0, 0), (2, 20), (4, 40)):
+                self._write_fake_snapshot(
+                    learner_dir,
+                    iteration=iteration,
+                    global_step=global_step,
+                    model_name=model_name,
+                    model_config=model_config,
+                )
+                _write_fake_artifact(
+                    _run_layout.artifact_iteration_dir(artifacts_root, iteration),
+                    model_name=model_name,
+                    model_config=model_config,
+                    iteration=iteration,
+                    global_learner_step=global_step,
+                )
+
+            match_calls: list[tuple[str, str, pathlib.Path]] = []
+
+            def fake_run_match(
+                model_package_path_a: str | os.PathLike[str],
+                model_package_path_b: str | os.PathLike[str],
+                *,
+                player_name_a: str,
+                player_name_b: str,
+                input_channels: int,
+                policy_size: int,
+                output_pgn_path: str | os.PathLike[str],
+                num_workers: int,
+                num_games: int,
+                num_action: int,
+                num_simulation: int,
+                c_puct: float,
+                c_visit: float,
+                c_scale: float,
+            ) -> None:
+                del (
+                    model_package_path_a,
+                    model_package_path_b,
+                    input_channels,
+                    policy_size,
+                    num_workers,
+                    num_games,
+                    num_action,
+                    num_simulation,
+                    c_puct,
+                    c_visit,
+                    c_scale,
+                )
+                output_path = pathlib.Path(output_pgn_path)
+                match_calls.append((player_name_a, player_name_b, output_path))
+                output_path.write_text(
+                    (
+                        f'[Event "Eval"]\n[White "{player_name_a}"]\n'
+                        f'[Black "{player_name_b}"]\n[Result "1/2-1/2"]\n\n1/2-1/2\n'
+                    ),
+                    encoding="utf-8",
+                )
+
+            def fake_ordo_run(
+                cmd: list[str],
+                *,
+                check: bool,
+                capture_output: bool,
+                text: bool,
+            ) -> subprocess.CompletedProcess[str]:
+                self.assertTrue(check)
+                self.assertTrue(capture_output)
+                self.assertTrue(text)
+                ratings_path = pathlib.Path(cmd[cmd.index("-o") + 1])
+                ratings_path.write_text(
+                    "  1 iter_000000_step_000000000 : 0.0\n"
+                    "  2 iter_000002_step_000000020 : 2.0\n"
+                    "  3 iter_000004_step_000000040 : 4.0\n",
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            with (
+                mock.patch(
+                    "codfish.orchestrator.torch.cuda.is_available",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.run_aoti_match",
+                    side_effect=fake_run_match,
+                ),
+                mock.patch(
+                    "codfish.orchestrator.subprocess.run",
+                    side_effect=fake_ordo_run,
+                ),
+            ):
+                result = run_eval_only(
+                    run_root=run_root,
+                    eval_config=_eval_config(
+                        snapshot_interval=2,
+                        match_games=2,
+                        window_offsets=(1,),
+                    ),
+                )
+
+            self.assertIsNotNone(result)
+            self.assertEqual(
+                [call[:2] for call in match_calls],
+                [
+                    (
+                        "iter_000000_step_000000000",
+                        "iter_000002_step_000000020",
+                    ),
+                    (
+                        "iter_000002_step_000000020",
+                        "iter_000004_step_000000040",
+                    ),
+                ],
+            )
+            self.assertEqual(
+                result.ratings_rows,
+                [
+                    {
+                        "snapshot": "iter_000000_step_000000000",
+                        "iteration": 0,
+                        "global_step": 0,
+                        "rating": 0.0,
+                    },
+                    {
+                        "snapshot": "iter_000002_step_000000020",
+                        "iteration": 2,
+                        "global_step": 20,
+                        "rating": 2.0,
+                    },
+                    {
+                        "snapshot": "iter_000004_step_000000040",
+                        "iteration": 4,
+                        "global_step": 40,
+                        "rating": 4.0,
+                    },
+                ],
+            )
+            self.assertEqual(
+                result.ratings_csv_path,
+                run_root / "eval" / "ordo" / "ratings.csv",
+            )
 
     def test_run_selfplay_update_loop_cleans_partial_dir_after_selfplay_failure(
         self,

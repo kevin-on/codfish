@@ -97,6 +97,7 @@ set(CODFISH_PYTHON_SOURCES
     "${PROJECT_SOURCE_DIR}/python/codfish/_dict_validation.py"
     "${PROJECT_SOURCE_DIR}/python/codfish/_run_layout.py"
     "${PROJECT_SOURCE_DIR}/python/codfish/artifacts.py"
+    "${PROJECT_SOURCE_DIR}/python/codfish/eval_only.py"
     "${PROJECT_SOURCE_DIR}/python/codfish/orchestrator.py"
     "${PROJECT_SOURCE_DIR}/python/codfish/learner/__init__.py"
     "${PROJECT_SOURCE_DIR}/python/codfish/learner/_alphazero_resnet.py"
@@ -126,6 +127,9 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${PROJECT_SOURCE_DIR}/python/codfish/artifacts.py"
             "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/artifacts.py"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/python/codfish/eval_only.py"
+            "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/eval_only.py"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${PROJECT_SOURCE_DIR}/python/codfish/orchestrator.py"
             "${CODFISH_PYTHON_PACKAGE_DIR}/codfish/orchestrator.py"

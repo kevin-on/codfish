@@ -479,6 +479,47 @@ def run_selfplay_update_loop(
     return reports
 
 
+def run_eval_only(
+    *,
+    run_root: str | os.PathLike[str],
+    eval_config: EvalConfig,
+) -> _EvalRatingsResult | None:
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "AOTI eval requires CUDA, but torch.cuda.is_available() is false"
+        )
+
+    root_path = Path(run_root)
+    learner_dir = _run_layout.learner_dir(root_path)
+    artifacts_root = _run_layout.artifacts_dir(root_path)
+    snapshots = _discover_eval_snapshots(learner_dir, eval_config.snapshot_interval)
+    if not snapshots:
+        raise FileNotFoundError(
+            "no eval snapshots found for the requested snapshot_interval"
+        )
+
+    eval_launcher = NativeEvalLauncher(eval_config)
+    for current_index, current_snapshot in enumerate(snapshots):
+        for offset in eval_config.window_offsets:
+            prior_index = current_index - offset
+            if prior_index < 0:
+                continue
+            _ensure_eval_match(
+                run_root=root_path,
+                artifacts_root=artifacts_root,
+                eval_launcher=eval_launcher,
+                snapshot_a=current_snapshot,
+                snapshot_b=snapshots[prior_index],
+            )
+
+    return _rebuild_eval_ratings(
+        run_root=root_path,
+        learner_dir=learner_dir,
+        current_snapshot=snapshots[-1],
+        snapshot_interval=eval_config.snapshot_interval,
+    )
+
+
 def _validate_runner_config(
     runner_config: LearnerRunnerConfig, learner_dir: Path
 ) -> None:
