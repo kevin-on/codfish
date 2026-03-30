@@ -24,7 +24,9 @@ class AlternatingGumbelMatchTaskFactory final : public GameTaskFactory {
   std::unique_ptr<GameTask> Create() override {
     auto task = std::make_unique<MatchTask>();
     task->searcher = std::make_unique<GumbelMCTS>(config_);
+    task->inactive_searcher = std::make_unique<GumbelMCTS>(config_);
     task->state = TaskState::kNew;
+    task->active_player_is_white = true;
     task->white_backend_slot = (next_game_index_ % 2 == 0) ? 0 : 1;
     task->black_backend_slot = 1 - task->white_backend_slot;
     ++next_game_index_;

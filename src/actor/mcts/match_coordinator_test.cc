@@ -57,7 +57,9 @@ class AlternatingMatchTaskFactory final : public GameTaskFactory {
   std::unique_ptr<GameTask> Create() override {
     auto task = std::make_unique<MatchTask>();
     task->searcher = std::make_unique<ImmediateTerminalSearcher>();
+    task->inactive_searcher = std::make_unique<ImmediateTerminalSearcher>();
     task->state = TaskState::kNew;
+    task->active_player_is_white = true;
     task->white_backend_slot = (next_task_index_ % 2 == 0) ? 0 : 1;
     task->black_backend_slot = 1 - task->white_backend_slot;
     ++next_task_index_;

@@ -128,11 +128,13 @@ lczero::Position BlackToMovePosition() {
 
 PendingEval MakeRoutedPendingEval(int white_backend_slot,
                                   int black_backend_slot,
+                                  bool active_player_is_white,
                                   std::vector<bool> black_to_move_items) {
   auto task = std::make_unique<MatchTask>();
   task->state = TaskState::kWaitingEval;
   task->white_backend_slot = white_backend_slot;
   task->black_backend_slot = black_backend_slot;
+  task->active_player_is_white = active_player_is_white;
 
   EvalRequest request;
   request.items.resize(black_to_move_items.size());
@@ -323,7 +325,8 @@ TEST(InferenceRuntime, SplitRequestCanShareLaterBatchWithNextRequest) {
   EXPECT_EQ(backend->batch_sizes(), std::vector<int>({4, 3}));
 }
 
-TEST(InferenceRuntime, RoutesItemsBySideToMoveAcrossMultipleBackends) {
+TEST(InferenceRuntime,
+     RoutesAllItemsToActivePlayerBackendAcrossMultipleBackends) {
   ThreadSafeQueue<PendingEval> request_queue;
   ThreadSafeQueue<std::unique_ptr<GameTask>> ready_queue;
   auto backend_zero = std::make_shared<MarkerBackend>(1000);
@@ -347,9 +350,11 @@ TEST(InferenceRuntime, RoutesItemsBySideToMoveAcrossMultipleBackends) {
   runtime.Start();
 
   ASSERT_TRUE(request_queue.push(MakeRoutedPendingEval(
-      /*white_backend_slot=*/0, /*black_backend_slot=*/1, {false, true})));
+      /*white_backend_slot=*/0, /*black_backend_slot=*/1,
+      /*active_player_is_white=*/true, {false, true})));
   ASSERT_TRUE(request_queue.push(MakeRoutedPendingEval(
-      /*white_backend_slot=*/1, /*black_backend_slot=*/0, {false, true})));
+      /*white_backend_slot=*/1, /*black_backend_slot=*/0,
+      /*active_player_is_white=*/true, {false, true})));
 
   std::unique_ptr<MatchTask> first = PopReadyMatchTask(ready_queue);
   std::unique_ptr<MatchTask> second = PopReadyMatchTask(ready_queue);
@@ -363,13 +368,34 @@ TEST(InferenceRuntime, RoutesItemsBySideToMoveAcrossMultipleBackends) {
   ASSERT_EQ(first->response->items.size(), 2u);
   ASSERT_EQ(second->response->items.size(), 2u);
   ExpectMarker(first->response->items[0], 1000);
-  ExpectMarker(first->response->items[1], 2000);
-  ExpectMarker(second->response->items[0], 2001);
-  ExpectMarker(second->response->items[1], 1001);
+  ExpectMarker(first->response->items[1], 1001);
+  ExpectMarker(second->response->items[0], 2000);
+  ExpectMarker(second->response->items[1], 2001);
   EXPECT_EQ(backend_zero->load_calls(), 1);
   EXPECT_EQ(backend_one->load_calls(), 1);
   EXPECT_EQ(backend_zero->batch_sizes(), std::vector<int>({2}));
   EXPECT_EQ(backend_one->batch_sizes(), std::vector<int>({2}));
+}
+
+TEST(InferenceRuntime, MatchTaskRoutingFlipsAfterActivePlayerSwap) {
+  MatchTask task;
+  task.white_backend_slot = 3;
+  task.black_backend_slot = 7;
+  task.active_player_is_white = true;
+
+  EvalRequestItem white_item;
+  white_item.len = 1;
+  white_item.positions[0] = WhiteToMovePosition();
+  EvalRequestItem black_item;
+  black_item.len = 1;
+  black_item.positions[0] = BlackToMovePosition();
+
+  EXPECT_EQ(task.BackendSlotForRequestItem(white_item), 3);
+  EXPECT_EQ(task.BackendSlotForRequestItem(black_item), 3);
+
+  task.active_player_is_white = false;
+  EXPECT_EQ(task.BackendSlotForRequestItem(white_item), 7);
+  EXPECT_EQ(task.BackendSlotForRequestItem(black_item), 7);
 }
 
 }  // namespace

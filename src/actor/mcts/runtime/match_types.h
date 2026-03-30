@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -10,10 +11,12 @@ namespace engine {
 class MatchTask final : public GameTask {
  public:
   int BackendSlotForRequestItem(const EvalRequestItem& item) const override {
-    const lczero::Position& position = item.positions[item.len - 1];
-    return position.IsBlackToMove() ? black_backend_slot : white_backend_slot;
+    static_cast<void>(item);
+    return active_player_is_white ? white_backend_slot : black_backend_slot;
   }
 
+  std::unique_ptr<MCTSSearcher> inactive_searcher;
+  bool active_player_is_white = true;
   int white_backend_slot = 0;
   int black_backend_slot = 1;
   std::vector<std::string> move_uci_history;

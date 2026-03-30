@@ -43,14 +43,18 @@ lczero::Move ParseMove(const char* uci) {
   return start.GetBoard().ParseMove(uci);
 }
 
-std::unique_ptr<GameTask> MakeMatchTask(std::unique_ptr<MCTSSearcher> searcher,
-                                        TaskState state, int white_backend_slot,
-                                        int black_backend_slot) {
+std::unique_ptr<GameTask> MakeMatchTask(
+    std::unique_ptr<MCTSSearcher> searcher,
+    std::unique_ptr<MCTSSearcher> inactive_searcher, TaskState state,
+    int white_backend_slot, int black_backend_slot,
+    bool active_player_is_white) {
   auto task = std::make_unique<MatchTask>();
   task->searcher = std::move(searcher);
+  task->inactive_searcher = std::move(inactive_searcher);
   task->state = state;
   task->white_backend_slot = white_backend_slot;
   task->black_backend_slot = black_backend_slot;
+  task->active_player_is_white = active_player_is_white;
   return task;
 }
 
@@ -69,11 +73,15 @@ TEST(MatchGameRunner, NonTerminalResultCommitsMoveAndRequeuesMatchTask) {
   });
   runner.Start();
 
-  auto searcher = std::make_unique<CommitRecordingSearcher>();
-  CommitRecordingSearcher* searcher_raw = searcher.get();
-  auto task = MakeMatchTask(std::move(searcher), TaskState::kReady,
+  auto white_searcher = std::make_unique<CommitRecordingSearcher>();
+  auto black_searcher = std::make_unique<CommitRecordingSearcher>();
+  CommitRecordingSearcher* white_searcher_raw = white_searcher.get();
+  CommitRecordingSearcher* black_searcher_raw = black_searcher.get();
+  auto task = MakeMatchTask(std::move(white_searcher),
+                            std::move(black_searcher), TaskState::kReady,
                             /*white_backend_slot=*/0,
-                            /*black_backend_slot=*/1);
+                            /*black_backend_slot=*/1,
+                            /*active_player_is_white=*/true);
   task->coroutine.emplace(task->searcher->Run());
   task->response.emplace();
 
@@ -92,11 +100,16 @@ TEST(MatchGameRunner, NonTerminalResultCommitsMoveAndRequeuesMatchTask) {
   ASSERT_TRUE(*requeued != nullptr);
   auto* match_task = dynamic_cast<MatchTask*>(requeued->get());
   ASSERT_NE(match_task, nullptr);
-  EXPECT_EQ(searcher_raw->commit_calls(), 1);
-  EXPECT_EQ(searcher_raw->committed_move(), move);
+  EXPECT_EQ(white_searcher_raw->commit_calls(), 1);
+  EXPECT_EQ(white_searcher_raw->committed_move(), move);
+  EXPECT_EQ(black_searcher_raw->commit_calls(), 1);
+  EXPECT_EQ(black_searcher_raw->committed_move(), move);
   EXPECT_EQ(match_task->state, TaskState::kNew);
   EXPECT_FALSE(match_task->coroutine.has_value());
   EXPECT_FALSE(match_task->response.has_value());
+  EXPECT_FALSE(match_task->active_player_is_white);
+  EXPECT_EQ(match_task->searcher.get(), black_searcher_raw);
+  EXPECT_EQ(match_task->inactive_searcher.get(), white_searcher_raw);
   ASSERT_EQ(match_task->move_uci_history.size(), 1u);
   EXPECT_EQ(match_task->move_uci_history[0], "e2e4");
   EXPECT_EQ(match_task->white_backend_slot, 0);
@@ -124,9 +137,11 @@ TEST(MatchGameRunner, TerminalResultBuildsCompletedMatchGame) {
   runner.Start();
 
   auto task = MakeMatchTask(std::make_unique<CommitRecordingSearcher>(),
+                            std::make_unique<CommitRecordingSearcher>(),
                             TaskState::kNew,
                             /*white_backend_slot=*/1,
-                            /*black_backend_slot=*/0);
+                            /*black_backend_slot=*/0,
+                            /*active_player_is_white=*/true);
   auto* match_task = dynamic_cast<MatchTask*>(task.get());
   ASSERT_NE(match_task, nullptr);
   match_task->move_uci_history.push_back("e2e4");

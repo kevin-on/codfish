@@ -79,11 +79,16 @@ void MatchGameRunner::RunLoop() {
 
     if (completed->result.game_result == lczero::GameResult::UNDECIDED) {
       assert(completed->result.root_history.GetLength() > 0);
+      assert(match_task->inactive_searcher != nullptr);
       const lczero::Position& root_position =
           completed->result.root_history.Last();
       match_task->move_uci_history.push_back(
           MoveToAbsoluteUci(root_position, completed->result.selected_move));
       task->searcher->CommitMove(completed->result.selected_move);
+      match_task->inactive_searcher->CommitMove(
+          completed->result.selected_move);
+      std::swap(task->searcher, match_task->inactive_searcher);
+      match_task->active_player_is_white = !match_task->active_player_is_white;
       task->coroutine.reset();
       task->response.reset();
       task->state = TaskState::kNew;
